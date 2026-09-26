@@ -25,13 +25,13 @@ todos:
     status: pending
   - id: B3
     content: B3 Claim compiler and dataset resolver (compiler.py, datasets.py)
-    status: pending
+    status: completed
   - id: A6
     content: "A6 External citation resolver: references.py + catalogs.py (Crossref, OpenAlex, S2)"
     status: pending
   - id: B4
     content: "B4 Rerun rewrite: compile → resolve → download → DSL (repro.py)"
-    status: pending
+    status: completed
   - id: A5
     content: A5 Bounded recursion with critic patches, max 3 rounds
     status: pending

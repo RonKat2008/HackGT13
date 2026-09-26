@@ -607,48 +607,129 @@ def push_kernel(spec: dict[str, Any]) -> dict[str, Any] | None:
         shutil.rmtree(work, ignore_errors=True)
 
 
+def _dataset_sentences(claims: list[dict[str, Any]], sections: dict[str, str]) -> list[str]:
+    import compiler
+
+    seen: set[str] = set()
+    sentences: list[str] = []
+
+    def add(text: str) -> None:
+        cleaned = " ".join(text.split()).strip()
+        if len(cleaned) < 20 or cleaned in seen:
+            return
+        if not compiler.dataset_slug(cleaned) and not re.search(
+            r"\b(rows|observations|passengers|samples|records)\b", cleaned, re.I
+        ):
+            return
+        seen.add(cleaned)
+        sentences.append(cleaned)
+
+    for claim in claims:
+        add(str(claim.get("text") or ""))
+    for name in ("abstract", "methods", "results"):
+        for part in re.split(r"(?<=[.!?])\s+", sections.get(name) or ""):
+            add(part)
+    return sentences
+
+
+def _claim_id_for(sentence: str, claims: list[dict[str, Any]]) -> str:
+    import hashlib
+
+    for claim in claims:
+        text = str(claim.get("text") or "")
+        if text and (text in sentence or sentence in text) and claim.get("claim_id"):
+            return str(claim["claim_id"])
+    return hashlib.sha1(sentence.encode()).hexdigest()[:12]
+
+
 def reproduce(
     claims: list[dict[str, Any]],
     sections: dict[str, str],
     *,
     model: Model | None = None,
     pusher: Pusher | None = None,
-) -> dict[str, Any]:
-    spec = propose(claims, sections, model)
-    if spec is None:
-        return _not_run("No claim names a public dataset and a count the experiment can rerun.")
-    table = find_table(spec["dataset_slug"], spec["file_name"])
-    if table is None:
-        table = download_table(spec["dataset_slug"], spec["file_name"])
-    local = run_checks(table, spec) if table is not None else None
-    remote = None
-    sender = pusher if pusher is not None else push_kernel
-    if os.environ.get("KAGGLE_USERNAME") and os.environ.get("KAGGLE_KEY"):
-        remote = sender(spec)
-    code = notebook_code(spec, table)
-    if remote and remote.get("status") in {"match", "mismatch", "missing_row"}:
-        remote["code"] = code
-        remote.setdefault("claim_text", spec["claim_text"])
-        remote.setdefault("kernel_url", KERNEL_URL)
-        remote.setdefault("log", "")
-        remote.setdefault("detail", "")
-        return remote
-    if local:
-        detail = str(local["detail"])
-        kernel_url = None
-        if remote and remote.get("kernel_url"):
-            kernel_url = remote["kernel_url"]
-            detail = f"{detail} The kernel was pushed. This result is the local table check."
-        return {
-            "where": "local",
-            "status": local["status"],
-            "log": local["log"],
-            "kernel_url": kernel_url,
-            "detail": detail,
-            "claim_text": local["claim_text"],
-            "code": code,
+) -> list[dict[str, Any]]:
+    """Compile each dataset sentence, resolve one table, and execute the DSL locally."""
+    import compiler
+    import datasets
+    import dsl
+    import pandas as pd
+    from dsl import Spec, formula
+
+    context = "\n".join(sections.get(name) or "" for name in ("methods", "results", "abstract"))
+    computations: list[dict[str, Any]] = []
+    for sentence in _dataset_sentences(claims, sections):
+        specs = compiler.compile_claim(sentence, ask=model)
+        if not specs:
+            continue
+        resolved = datasets.resolve(f"{sentence}\n{context}", specs)
+        steps = ["Located claim", *list(resolved.get("steps") or [])]
+        slug = str(resolved.get("dataset_slug") or "")
+        primary = next((spec for spec in specs if spec.operation.value != "ROWS"), specs[0])
+        base: dict[str, Any] = {
+            "claim_id": _claim_id_for(sentence, claims),
+            "dataset_slug": slug,
+            "resolution": resolved.get("resolution") or "not_found",
+            "spec": primary.model_dump(mode="json"),
+            "actual": None,
+            "expected": primary.expected,
+            "status": "could_not_run",
+            "steps": steps,
+            "log": "dataset not available on this machine",
+            "formula": formula(primary),
         }
-    detail = "The dataset could not be fetched, so the experiment was not run."
-    if remote and remote.get("detail"):
-        detail = str(remote["detail"])
-    return _not_run(detail, spec["claim_text"])
+        if resolved.get("resolution") != "match" or not slug:
+            if resolved.get("resolution") == "ambiguous":
+                base["log"] = "Exact dataset version could not be verified."
+            computations.append(base)
+            continue
+        table = find_table(slug, "")
+        if table is None:
+            table = download_table(slug, "")
+        if table is None:
+            computations.append(base)
+            continue
+        steps.append("Downloaded source data")
+        try:
+            frame = pd.read_csv(table)
+        except (OSError, ValueError, pd.errors.ParserError):
+            base["steps"] = steps
+            base["log"] = "dataset not available on this machine"
+            computations.append(base)
+            continue
+        outcomes = []
+        for spec in specs:
+            if not isinstance(spec, Spec):
+                continue
+            outcome = dsl.execute(spec, frame)
+            outcomes.append(outcome)
+            steps.append(f"Executed {spec.operation.value}")
+            if outcome["status"] == "reproduced":
+                steps.append(f"Reproduced: {outcome['actual']}")
+            elif outcome["status"] == "could_not_reproduce":
+                steps.append(f"Computed {outcome['actual']}, claimed {outcome['expected']}")
+        chosen = next(
+            (item for item in outcomes if item.get("status") == "could_not_reproduce"),
+            next((item for item in outcomes if item.get("formula") == formula(primary)), outcomes[-1] if outcomes else None),
+        )
+        if chosen is None:
+            computations.append(base)
+            continue
+        base.update(
+            {
+                "actual": chosen.get("actual"),
+                "expected": chosen.get("expected"),
+                "status": chosen.get("status") or "could_not_run",
+                "formula": chosen.get("formula") or formula(primary),
+                "log": chosen.get("log") or "",
+                "steps": steps,
+            }
+        )
+        if os.environ.get("ARX_KAGGLE_KERNEL") == "1":
+            sender = pusher if pusher is not None else push_kernel
+            try:
+                sender({"dataset_slug": slug, "claim_text": sentence, "checks": [], "file_name": ""})
+            except Exception:
+                pass
+        computations.append(base)
+    return computations

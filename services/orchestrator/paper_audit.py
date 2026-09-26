@@ -178,7 +178,30 @@ def audit_paper(
                 produced = repro(claims, sections)
             except Exception:
                 produced = None
-            kaggle = produced if isinstance(produced, dict) else _kaggle_result(None)
+            if isinstance(produced, dict):
+                kaggle = produced
+            elif isinstance(produced, list):
+                failed = next(
+                    (item for item in produced if item.get("status") == "could_not_reproduce"),
+                    None,
+                )
+                kaggle = {
+                    "where": "local",
+                    "status": "not_run" if not produced else "ran",
+                    "log": "" if failed is None else str(failed.get("log") or ""),
+                    "kernel_url": None,
+                    "detail": (
+                        "No public table to rerun."
+                        if not produced
+                        else str(failed.get("log") or "A dataset claim could not be reproduced.")
+                        if failed
+                        else "The public table matches the count written in the paper."
+                    ),
+                    "computations": produced,
+                    "claim_text": "" if failed is None else str(failed.get("formula") or ""),
+                }
+            else:
+                kaggle = _kaggle_result(None)
         else:
             kaggle = _kaggle_result(None)
         if kaggle.get("status") in TEST_FAIL_STATUSES:

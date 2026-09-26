@@ -1,0 +1,227 @@
+"""Resolve a dataset mention to one public table, or refuse to guess."""
+
+from __future__ import annotations
+
+import csv
+import hashlib
+import io
+import json
+import os
+import subprocess
+from pathlib import Path
+from typing import Any, Callable
+
+import jev
+import repro
+from dsl import Spec
+
+REPO_ROOT = Path(__file__).resolve().parents[2]
+CACHE = REPO_ROOT / ".arxiv-cache" / "datasets"
+
+# Columns and row counts used to tell a named table from a lookalike.
+CATALOG: dict[str, dict[str, Any]] = {
+    "yasserh/titanic-dataset": {
+        "title": "Titanic Dataset",
+        "columns": [
+            "PassengerId",
+            "Survived",
+            "Pclass",
+            "Name",
+            "Sex",
+            "Age",
+            "SibSp",
+            "Parch",
+            "Ticket",
+            "Fare",
+            "Cabin",
+            "Embarked",
+        ],
+        "rows": 891,
+    },
+}
+
+Search = Callable[[str], list[dict[str, Any]]]
+Judge = Callable[[str, str], str | None]
+
+
+def _candidate(slug: str, title: str = "", columns: list[str] | None = None, rows: int | None = None) -> dict[str, Any]:
+    known = CATALOG.get(slug, {})
+    return {
+        "slug": slug,
+        "title": title or str(known.get("title") or slug),
+        "columns": list(columns if columns is not None else known.get("columns") or []),
+        "rows": rows if rows is not None else known.get("rows"),
+    }
+
+
+def _mentions(text: str) -> list[dict[str, Any]]:
+    found: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for match in repro.SLUG_RE.finditer(text):
+        slug = match.group(1).lower()
+        if slug in seen:
+            continue
+        seen.add(slug)
+        found.append(_candidate(slug))
+    lowered = text.lower()
+    for name, slug in repro.KNOWN_DATASETS.items():
+        if name in lowered and slug not in seen:
+            seen.add(slug)
+            found.append(_candidate(slug))
+    return found
+
+
+def _needed_columns(specs: list[Spec]) -> set[str]:
+    return {spec.column for spec in specs if spec.column}
+
+
+def _rows_expected(specs: list[Spec]) -> int | None:
+    for spec in specs:
+        if spec.operation.value == "ROWS" and isinstance(spec.expected, int):
+            return spec.expected
+    return None
+
+
+def _has_columns(candidate: dict[str, Any], needed: set[str]) -> bool:
+    if not needed:
+        return True
+    columns = {str(name) for name in candidate.get("columns") or []}
+    return bool(columns) and needed <= columns
+
+
+def _score(candidate: dict[str, Any], *, needed: set[str], rows_expected: int | None, explicit: set[str]) -> int:
+    score = 0
+    if candidate["slug"] in explicit:
+        score += 2
+    if _has_columns(candidate, needed):
+        score += 2
+    rows = candidate.get("rows")
+    if rows_expected is not None and rows == rows_expected:
+        score += 1
+    return score
+
+
+def _kaggle_search(query: str) -> list[dict[str, Any]]:
+    if not os.environ.get("KAGGLE_USERNAME", "").strip() or not os.environ.get("KAGGLE_KEY", "").strip():
+        return []
+    digest = hashlib.sha256(query.lower().encode()).hexdigest()[:16]
+    path = CACHE / f"search-{digest}.json"
+    if path.is_file():
+        try:
+            cached = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            cached = None
+        if isinstance(cached, list):
+            return cached
+    try:
+        completed = subprocess.run(
+            ["kaggle", "datasets", "list", "-s", query, "--csv"],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=20,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return []
+    if completed.returncode != 0 or not completed.stdout.strip():
+        return []
+    rows = list(csv.DictReader(io.StringIO(completed.stdout)))
+    found: list[dict[str, Any]] = []
+    for row in rows:
+        slug = str(row.get("ref") or row.get("id") or "").strip().lower()
+        if "/" not in slug:
+            continue
+        found.append(_candidate(slug, title=str(row.get("title") or slug)))
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(found), encoding="utf-8")
+    except OSError:
+        pass
+    return found
+
+
+def _default_judge(mention: str, title: str) -> str | None:
+    if not os.environ.get("OPENROUTER_API_KEY", "").strip():
+        return None
+    judged = jev.judge_claim(
+        f"Does this candidate represent the dataset in the paper?\n{mention}",
+        title,
+    )
+    if judged.get("not_run"):
+        return None
+    if judged.get("label") == "supported":
+        return "match"
+    return "no_match"
+
+
+def resolve(
+    text: str,
+    specs: list[Spec] | None = None,
+    *,
+    search: Search | None = None,
+    judge: Judge | None = None,
+) -> dict[str, Any]:
+    specs = list(specs or [])
+    needed = _needed_columns(specs)
+    rows_expected = _rows_expected(specs)
+    named = _mentions(text)
+    explicit = {item["slug"] for item in named if repro.SLUG_RE.search(text) and item["slug"] in text.lower()}
+    steps: list[str] = []
+    if named:
+        steps.append("Identified dataset")
+    query = named[0]["slug"] if named else ""
+    if not query:
+        for name in repro.KNOWN_DATASETS:
+            if name in text.lower():
+                query = name
+                break
+    if search is not None:
+        extra = search(query or text[:120])
+    elif query:
+        extra = _kaggle_search(query)
+    else:
+        extra = []
+    by_slug: dict[str, dict[str, Any]] = {}
+    for item in [*named, *extra]:
+        slug = str(item.get("slug") or "")
+        if slug:
+            by_slug.setdefault(slug, item)
+    candidates = list(by_slug.values())
+    fitting = [item for item in candidates if _has_columns(item, needed)]
+    pool = fitting or ([] if needed else candidates)
+
+    def finish(resolution: str, slug: str, step: str) -> dict[str, Any]:
+        if step:
+            steps.append(step)
+        return {
+            "resolution": resolution,
+            "dataset_slug": slug,
+            "steps": steps,
+            "log": step,
+        }
+
+    if not pool:
+        return finish("not_found", "", "")
+    if len(pool) == 1:
+        return finish("match", pool[0]["slug"], "Resolved exact dataset")
+
+    scored = [
+        (_score(item, needed=needed, rows_expected=rows_expected, explicit=explicit), item) for item in pool
+    ]
+    best = max(score for score, _item in scored)
+    tied = [item for score, item in scored if score == best]
+    if len(tied) == 1:
+        return finish("match", tied[0]["slug"], "Resolved exact dataset")
+    if len(tied) == 2:
+        decide = judge if judge is not None else _default_judge
+        picks = []
+        for item in tied:
+            try:
+                label = decide(text, str(item.get("title") or item["slug"]))
+            except Exception:
+                label = None
+            if label == "match":
+                picks.append(item)
+        if len(picks) == 1:
+            return finish("match", picks[0]["slug"], "Resolved exact dataset")
+    return finish("ambiguous", "", "Exact dataset version could not be verified")
