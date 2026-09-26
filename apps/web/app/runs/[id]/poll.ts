@@ -3,6 +3,7 @@
 import { createElement, Fragment, useEffect, useState } from "react";
 import type { Run } from "@/lib/api";
 import { Claims } from "./claims";
+import { RoundDiff } from "./diff";
 
 function hasFinalStatus(run: Run): boolean {
   return Boolean(run.final_status);
@@ -158,6 +159,7 @@ export function RunPoll({
             : null,
         ),
         createElement(Claims, { run }),
+        createElement(RoundDiff, { run }),
       )
     : null;
 
