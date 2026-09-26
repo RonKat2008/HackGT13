@@ -7,6 +7,7 @@ from pydantic import BaseModel, ConfigDict, Field
 class Product(StrEnum):
     STORMCITE = "stormcite"
     LANDFALL = "landfall"
+    ARXAUDIT = "arxaudit"
 
 
 class PatchKind(StrEnum):

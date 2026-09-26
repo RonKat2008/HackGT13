@@ -142,3 +142,32 @@ def test_json_schemas_are_draft_2020_12():
         "span_window",
         "retry_guard_block",
     }
+
+
+def test_accepts_arxaudit_product():
+    payload = copy.deepcopy(VALID_RUN)
+    payload["product"] = "arxaudit"
+
+    run = Run.model_validate(payload)
+
+    assert run.product == "arxaudit"
+
+
+def test_batch_schema_freezes_arxaudit_contract():
+    batch_schema = json.loads((SCHEMA_DIR / "batch.json").read_text())
+
+    assert batch_schema["$schema"] == "https://json-schema.org/draft/2020-12/schema"
+    assert set(batch_schema["properties"]["kind"]["enum"]) == {"links", "batch"}
+
+    issue_type = batch_schema["$defs"]["issue_reason"]["properties"]["issue_type"]
+    assert set(issue_type["enum"]) == {
+        "citation",
+        "number",
+        "dataset",
+        "test",
+        "support",
+    }
+
+    paper_job_props = batch_schema["$defs"]["paper_job"]["properties"]
+    assert "author_email" in paper_job_props
+    assert "contacted_at" in paper_job_props
