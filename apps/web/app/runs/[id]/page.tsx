@@ -1,5 +1,11 @@
 import { getRun } from "@/lib/api";
-import { Claims } from "./claims";
+import type { Run } from "@/lib/api";
+import { RunPoll } from "./poll";
+
+async function fetchRun(id: string): Promise<Run> {
+  "use server";
+  return getRun(id);
+}
 
 export default async function RunPage({
   params,
@@ -8,25 +14,13 @@ export default async function RunPage({
 }) {
   const { id } = await params;
 
-  let run;
+  let run: Run | null = null;
+  let loadError: string | null = null;
   try {
     run = await getRun(id);
   } catch (err) {
-    const message =
+    loadError =
       err instanceof Error ? err.message : "Failed to load run.";
-    return (
-      <main className="mx-auto flex w-full max-w-lg flex-1 flex-col px-6 py-16">
-        <h1 className="mb-4 text-2xl font-semibold tracking-tight text-zinc-900">
-          Run
-        </h1>
-        <p
-          role="alert"
-          className="rounded border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800"
-        >
-          {message}
-        </p>
-      </main>
-    );
   }
 
   return (
@@ -35,36 +29,21 @@ export default async function RunPage({
         Run
       </h1>
 
-      <dl className="flex flex-col gap-4 text-sm">
-        <div>
-          <dt className="font-medium text-zinc-700">Goal</dt>
-          <dd className="mt-1 text-zinc-900">{run.goal}</dd>
-        </div>
-
-        <div>
-          <dt className="font-medium text-zinc-700">Product</dt>
-          <dd className="mt-1 text-zinc-900">{run.product}</dd>
-        </div>
-
-        <div>
-          <dt className="font-medium text-zinc-700">Final status</dt>
-          <dd className="mt-1 text-zinc-900">{run.final_status}</dd>
-        </div>
-
-        <div>
-          <dt className="font-medium text-zinc-700">Fitness</dt>
-          <dd className="mt-1 text-zinc-900">{run.fitness}</dd>
-        </div>
-
-        {typeof run.replay_of === "string" ? (
-          <div>
-            <dt className="font-medium text-zinc-700">Replay of</dt>
-            <dd className="mt-1 text-zinc-900">{run.replay_of}</dd>
-          </div>
-        ) : null}
-      </dl>
-
-      <Claims run={run} />
+      {id ? (
+        <RunPoll
+          id={id}
+          initialRun={run}
+          initialError={loadError}
+          fetchRun={fetchRun}
+        />
+      ) : loadError ? (
+        <p
+          role="alert"
+          className="rounded border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800"
+        >
+          {loadError}
+        </p>
+      ) : null}
     </main>
   );
 }
