@@ -1,0 +1,4 @@
+{
+  "bad_span": "BAD: the retrieved excerpt does not mention the requested metric.",
+  "good_span": "GOOD: the results section reports the requested metric."
+}
