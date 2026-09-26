@@ -650,6 +650,25 @@ def _conference_name_for_job(job_id: str) -> str:
     return str(row["name"]) if row else ""
 
 
+def _finding_sentence(issues: list[dict[str, Any]]) -> str:
+    reasons: list[str] = []
+    seen: set[str] = set()
+    for item in issues:
+        if item.get("issue_type") == "ai_likeness":
+            continue
+        reason = " ".join(str(item.get("reason") or "").split())
+        if not reason:
+            continue
+        if not reason.endswith("."):
+            reason = f"{reason}."
+        key = reason.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        reasons.append(reason)
+    return " ".join(reasons)
+
+
 def render_report(paper: dict[str, Any], conference_name: str = "") -> str:
     title = str(paper.get("title") or paper.get("arxiv_id") or "Untitled")
     arxiv_id = str(paper.get("arxiv_id") or "")
@@ -673,6 +692,10 @@ def render_report(paper: dict[str, Any], conference_name: str = "") -> str:
         lines.append("Not read. The desk could not open this paper.")
     else:
         lines.append("Not judged yet. Run the list, then open this report again.")
+
+    sentence = _finding_sentence(issues)
+    if sentence:
+        lines.extend(["", sentence])
 
     failed = [item for item in issues if item.get("issue_type") != "ai_likeness"]
     lines.extend(["", "## What failed", ""])

@@ -19,6 +19,22 @@ export function failureWhere(issues: { issue_type: string }[]): string {
   return ordered.join(", ");
 }
 
+export function findingSentence(issues: { issue_type: string; reason: string }[]): string {
+  const reasons: string[] = [];
+  const seen = new Set<string>();
+  for (const issue of issues) {
+    if (issue.issue_type === "ai_likeness") continue;
+    let reason = issue.reason.replace(/\s+/g, " ").trim();
+    if (!reason) continue;
+    if (!reason.endsWith(".")) reason = `${reason}.`;
+    const key = reason.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    reasons.push(reason);
+  }
+  return reasons.join(" ");
+}
+
 export function verdictLabel(status: string): string {
   if (status === "passed") return "Passed";
   if (status === "contradicted") return "Failed";

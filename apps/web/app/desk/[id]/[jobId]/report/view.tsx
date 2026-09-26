@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import type { Issue, Paper } from "@/lib/desk";
-import { verdictLabel, verdictTone } from "@/lib/verdict";
+import { findingSentence, verdictLabel, verdictTone } from "@/lib/verdict";
 import { PdfView } from "../../../pdf-view";
 
 const KIND: Record<string, string> = {
@@ -21,6 +21,7 @@ export function ReportView({ paper }: { paper: Paper }) {
   const [selected, setSelected] = useState(0);
   const issue = paper.issues[selected] ?? paper.issues[0];
   const title = paper.title || paper.arxiv_id;
+  const sentence = findingSentence(paper.issues);
 
   return (
     <div className="flex min-h-0 flex-1 flex-col lg:flex-row">
@@ -40,12 +41,13 @@ export function ReportView({ paper }: { paper: Paper }) {
           {" · "}
           <span className={verdictTone(paper.status)}>{verdictLabel(paper.status)}</span>
         </p>
+        {sentence ? <p className="mt-6 text-sm leading-6 text-[#1c1915]">{sentence}</p> : null}
         {paper.issues.length === 0 ? (
           <p className="mt-6 text-sm leading-6 text-[#1c1915]">
             No finding on this paper. A citation, a number, a support check, and a rerun did not fail.
           </p>
         ) : (
-          <ol className="mt-6 flex flex-col gap-3">
+          <ol className={`${sentence ? "mt-4" : "mt-6"} flex flex-col gap-3`}>
             {paper.issues.map((item, index) => {
               const quote = quoteOf(item);
               const active = index === selected;
