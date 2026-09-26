@@ -23,7 +23,7 @@ The point is a second pair of eyes on the claims a chair would otherwise have to
 **In.**
 
 - One chair, one list of papers, any new-style arXiv id, plus the two local fixtures used to demo a failed paper and a clean one.
-- Ten reading stages, from opening the PDF to stamping the problems.
+- Ten reading stages, from opening the PDF to stamping the problems: parse, claims, evidence, citations, numbers, tables, dataset, reproduce, verify, critic, stamp.
 - A chat that stays on the list, and a summary that shows progress and a result.
 - The original PDF beside the finding, with the failed sentence marked.
 - A markdown report per judged paper, and a zip of those reports.
@@ -68,29 +68,29 @@ The first five are in the desk now. The sixth is designed and not yet wired into
 
 **Shipped.**
 
-- Sign in, create a list, paste arXiv ids, store the title and abstract, delete a paper.
-- Run the queue. Specialists report one sentence each: opened the PDF, found the sections, pulled claims, citations that do not resolve, numbers missing from results, claims without support, no likeness score, a rerun or “no public table,” and a stamp of the problems.
+- Sign in, create a list, paste arXiv ids, store the title and abstract, delete a paper. PDF upload is available for a local file.
+- Run the queue. Stages in order: parse, claims, evidence, citations, numbers, tables, dataset, reproduce, verify, critic, stamp. Each writes one sentence. Table arithmetic and the critic retry are not filled in yet; those stages finish immediately.
+- Typed claims with pages. MiniLM `evidence.attach` retrieves supporting and contradicting passages. Catalogs (Crossref, OpenAlex, Semantic Scholar) run on citation claims. `jev.judge_claims` runs on the desk verify stage. The rerun is the restricted DSL in `repro.py`, not the paper’s own code.
 - Chat with `@` mentions, a trace of what was chosen, and numbered markers into the PDF. A gold line connects the marker to the highlighted band.
 - Summary as its own tab: one bar per paper, the live stage in gold, the result at the end. Click a stage to open that part of the paper.
 - Duplicate findings collapse. A paper that stored the same support problem many times is shown once.
-- Markdown report and a zip of judged papers. Chat history is stored on the conference so a refresh keeps the thread.
-- Fixture pair: `0000.00001` fails, `0000.00002` is the clean contrast.
+- On-screen report with the PDF beside each finding, plus a markdown report and a zip of judged papers. Chat history is stored on the conference so a refresh keeps the thread.
+- Fixture pair: `0000.00001` fails, `0000.00002` is the clean contrast, plus the demo paper `0000.00003`.
 
 **Designed, not the chair’s main path yet.**
 
-- The report as a document on the left and the PDF on the right, each finding citing its page. Today the report is markdown and the PDF lives on the paper page.
-- The playbook. A failed check may propose one small patch to how the next read searches or how wide a span it uses. The same paper is read again. If the read gets more faithful, the patch stays. If it gets worse, or if it only passed by dropping the fact, the patch is archived. The next paper loads the few patches that have earned it. Agents do not edit their own code to force a pass.
-- Nearest labeled abstracts as context. Labels are Human or Generated. That block was removed from the paper page because it was being read as a verdict. It is not one.
+- The on-screen report with the PDF is shipped. The playbook is still not connected to the desk critic (`paper_audit` `critic()` returns immediately).
+- Nearest labeled abstracts as context. Labels are Human or Generated. They are still not a verdict.
 
 **Explicitly not a feature.** Reject buttons, fraud stamps, “this paper is AI,” and likeness as a reason to write the author.
 
 ## Technical depth
 
-**Read path.** A new-style arXiv id is downloaded, cached, and checked for a PDF header. Text is split into sections. Specialists run in order: ingest, sections, retrieve, extract, resolve, numbers, support, provenance, a table rerun, then a stamp. Parsers and citation lookup run before any model judgment. Grok writes prose for the chat. Jev, through OpenRouter, judges a claim against evidence text. The browser never trusts a page number from the model. The page comes from searching the PDF. The highlight is the same string found in the rendered text layer.
+**Read path.** A new-style arXiv id is downloaded, cached, and checked for a PDF header. Text is split into sections. Stages run in order: parse, claims, evidence, citations, numbers, tables, dataset, reproduce, verify, critic, stamp. Table arithmetic and the critic retry are not filled in. Parsers, MiniLM evidence, and catalog lookup run before Jev. Catalogs (Crossref, OpenAlex, Semantic Scholar) run on citation claims. `jev.judge_claims` runs on the desk verify stage. Grok writes prose for the chat. The browser never trusts a page number from the model. The page comes from searching the PDF. The highlight is the same string found in the rendered text layer. Citation, numeric, and evidence work for each claim runs in a pool of four, and the stage events stay in that order.
 
-**What counts as an issue.** Citation, number, support, dataset, or a failed rerun. Provenance does not open an issue. If the abstract-corpus probe’s holdout AUC is under 0.60, likeness is hidden. The probe that was run sits above that line. The desk still does not turn likeness into a finding.
+**What counts as an issue.** Unresolved citation, contradicted number or claim, unsupported claim, dataset problem, or a failed rerun. Likeness does not open an issue. If the abstract-corpus probe’s holdout AUC is under 0.60, likeness is hidden. The probe that was run sits above that line. The desk still does not turn likeness into a finding.
 
-**Rerun.** Only when the paper names a public table. The worker checks rows, a sum, a mean, or a count. It does not retrain a model and it does not execute the paper’s code. The datasets in use are a public corpus of human and GPT research abstracts, and the Titanic survival table for a claim that names that table.
+**Rerun.** Only when the paper names a public table. The worker compiles a claim, resolves a dataset, and runs the restricted DSL in `repro.py` (rows, sum, mean, count, and related ops). It does not retrain a model and it does not execute the paper’s code. The datasets in use are a public corpus of human and GPT research abstracts, and the Titanic survival table for a claim that names that table.
 
 **Memory.** Conference lists, issues, specialist events, and chat turns live in the local desk database. Accounts are Supabase. The owner of a list is the signed-in user id. Keys stay on the server.
 

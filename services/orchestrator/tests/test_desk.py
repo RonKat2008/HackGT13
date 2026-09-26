@@ -231,9 +231,10 @@ def test_judged_paper_report_and_zip(tmp_path, monkeypatch):
     failed = next(item for item in papers if item["arxiv_id"] == "0000.00001")
     report = client.get(f"/desk/papers/{failed['job_id']}/report")
     assert report.status_code == 200
-    assert "What failed" in report.text
     assert "Smith, 2099" in report.text
     assert "fraudulent" not in report.text.lower()
+    assert "What failed" not in report.text
+    assert "What passed" not in report.text
 
     unread = client.post(
         f"/desk/conferences/{conference_id}/submissions",
@@ -251,7 +252,51 @@ def test_judged_paper_report_and_zip(tmp_path, monkeypatch):
     assert "0000.00001.md" in names
     assert "0000.00002.md" in names
     assert "1706.03762.md" not in names
-    assert "What passed" in archive.read("0000.00001.md").decode("utf-8")
+    assert "Smith, 2099" in archive.read("0000.00001.md").decode("utf-8")
+
+
+def test_demo_paper_report_has_claims_and_no_banned_words(tmp_path, monkeypatch):
+    monkeypatch.setenv("ARX_EMBEDDER", "hash")
+    monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+    monkeypatch.delenv("XAI_API_KEY", raising=False)
+
+    def no_catalog(_claims, _references_text, transport=None):
+        return None
+
+    def no_lookup(_query, _entry, transport=None):
+        return {"queried": [], "reference": ""}
+
+    def no_jev(*_args, **_kwargs):
+        return {"label": "not_mentioned", "confidence": 0.0, "probs": {}, "not_run": True}
+
+    monkeypatch.setattr("references.attach", no_catalog)
+    monkeypatch.setattr("catalogs.lookup", no_lookup)
+    monkeypatch.setattr("jev.judge_claim", no_jev)
+
+    client = _client(tmp_path, monkeypatch)
+    conference_id = _conference(client)
+    client.post(
+        f"/desk/conferences/{conference_id}/submissions",
+        json={"lines": ["0000.00003"]},
+    )
+    client.post(f"/desk/conferences/{conference_id}/run", json={})
+    paper = None
+    for _ in range(120):
+        papers = client.get(f"/desk/conferences/{conference_id}").json()["papers"]
+        if papers and papers[0]["status"] in {"passed", "contradicted", "error"}:
+            paper = papers[0]
+            break
+        time.sleep(0.1)
+
+    assert paper is not None
+    assert paper["status"] in {"passed", "contradicted", "error"}
+    report = client.get(f"/desk/papers/{paper['job_id']}/report")
+    assert report.status_code == 200
+    body = report.text
+    assert "claims analyzed" in body
+    lowered = body.lower()
+    for banned in ("fake", "fraudulent", "fabricated", "ai-written"):
+        assert banned not in lowered
 
 
 def test_second_add_keeps_one_copy_with_title_and_delete(tmp_path, monkeypatch):

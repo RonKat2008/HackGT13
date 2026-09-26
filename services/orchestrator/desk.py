@@ -967,11 +967,152 @@ def _finding_sentence(issues: list[dict[str, Any]]) -> str:
     return " ".join(reasons)
 
 
+_CLAIM_VERDICT_WORD = {
+    "supported": "Supported",
+    "contradicted": "Contradicted",
+    "not_mentioned": "Not found",
+    "unresolved": "Unresolved",
+    "ambiguous": "Ambiguous",
+    "reproduced": "Reproduced",
+    "could_not_reproduce": "Could not reproduce",
+    "insufficient_evidence": "Insufficient evidence",
+    "not_checked": "Not checked",
+}
+
+_CATALOG_NAME = {
+    "crossref": "Crossref",
+    "openalex": "OpenAlex",
+    "semantic_scholar": "Semantic Scholar",
+}
+
+
+def _summary_line(summary: dict[str, Any]) -> str:
+    analyzed = int(summary.get("analyzed") or 0)
+    if analyzed <= 0:
+        return ""
+    noun = "claim analyzed" if analyzed == 1 else "claims analyzed"
+    parts = [f"{analyzed} {noun}", f"{int(summary.get('supported') or 0)} supported"]
+    contradicted = int(summary.get("contradicted") or 0)
+    if contradicted:
+        parts.append(f"{contradicted} contradicted")
+    unresolved = int(summary.get("unresolved") or 0)
+    if unresolved:
+        label = "unresolved citation" if unresolved == 1 else "unresolved citations"
+        parts.append(f"{unresolved} {label}")
+    not_reproduced = int(summary.get("not_reproduced") or 0)
+    if not_reproduced:
+        parts.append(f"{not_reproduced} not reproduced")
+    insufficient = int(summary.get("insufficient") or 0)
+    if insufficient:
+        label = "needs human review" if insufficient == 1 else "need human review"
+        parts.append(f"{insufficient} {label}")
+    return " · ".join(parts)
+
+
+def _category_lines(summary: dict[str, Any]) -> list[str]:
+    categories = summary.get("categories") or {}
+    rows = [
+        ("Citations resolved", categories.get("citations") or {}, "resolved"),
+        ("Internal consistency", categories.get("internal") or {}, "supported"),
+        ("Numerical consistency", categories.get("numerical") or {}, "consistent"),
+        ("Computational reproduction", categories.get("computational") or {}, "reproduced"),
+    ]
+    lines: list[str] = []
+    for label, bucket, key in rows:
+        total = int(bucket.get("total") or 0)
+        if total <= 0:
+            continue
+        lines.append(f"{label} {int(bucket.get(key) or 0)} / {total}")
+    return lines
+
+
+def _primary_evidence(claim: dict[str, Any]) -> dict[str, Any] | None:
+    evidence = list(claim.get("evidence") or [])
+    for item in evidence:
+        if item.get("role") == "contradicts" and str(item.get("text") or "").strip():
+            return item
+    for item in evidence:
+        if str(item.get("text") or "").strip():
+            return item
+    return None
+
+
+def _append_finding_section(lines: list[str], claim: dict[str, Any]) -> None:
+    text = str(claim.get("text") or "").strip()
+    lines.extend(["", f"## {text or 'Finding'}", ""])
+    if text:
+        lines.append(text)
+    page = claim.get("page")
+    if isinstance(page, int) and page >= 1:
+        lines.append(f"Claim page: {page}")
+    evidence = _primary_evidence(claim)
+    if evidence is not None:
+        evidence_page = evidence.get("page")
+        if isinstance(evidence_page, int) and evidence_page >= 1:
+            lines.append(f"Evidence page: {evidence_page}")
+        quote = str(evidence.get("text") or "").strip()
+        if quote:
+            lines.append(f"> {quote}")
+    verdict = str(claim.get("verdict") or "")
+    lines.append(_CLAIM_VERDICT_WORD.get(verdict, verdict or "Not checked"))
+    confidence = float(claim.get("confidence") or 0.0)
+    lines.append(f"Confidence: {int(round(confidence * 100))}%")
+    catalog = claim.get("catalog") if isinstance(claim.get("catalog"), dict) else None
+    queried = list((catalog or {}).get("queried") or []) if catalog else []
+    for row in queried:
+        name = str(row.get("catalog") or "").strip()
+        label = _CATALOG_NAME.get(name, name or "Catalog")
+        status = str(row.get("status") or "").strip() or "not_checked"
+        lines.append(f"{label}: {status}")
+    computation = claim.get("computation") if isinstance(claim.get("computation"), dict) else None
+    if computation:
+        expected = computation.get("expected")
+        actual = computation.get("actual")
+        formula = str(computation.get("formula") or "").strip()
+        parts = []
+        if expected is not None:
+            parts.append(f"expected {expected}")
+        if actual is not None:
+            parts.append(f"actual {actual}")
+        if formula:
+            parts.append(f"formula {formula}")
+        if parts:
+            lines.append("; ".join(parts))
+    for step in claim.get("steps") or []:
+        cleaned = str(step or "").strip()
+        if cleaned:
+            lines.append(cleaned)
+
+
+def _append_issue_sections(lines: list[str], issues: list[dict[str, Any]]) -> None:
+    failed = [item for item in issues if item.get("issue_type") != "ai_likeness"]
+    for item in failed:
+        kind = _CHECK_LABELS.get(
+            str(item.get("issue_type") or ""),
+            str(item.get("issue_type") or "Check"),
+        )
+        lines.extend(["", f"## {kind}", ""])
+        claim = str(item.get("claim_text") or "").strip()
+        if claim:
+            lines.append(claim)
+        page = item.get("page")
+        if isinstance(page, int) and page >= 1:
+            lines.append(f"Claim page: {page}")
+        evidence = str(item.get("evidence_span") or "").strip()
+        if evidence:
+            lines.append(f"> {evidence}")
+        reason = str(item.get("reason") or "").strip()
+        if reason:
+            lines.append(reason)
+
+
 def render_report(paper: dict[str, Any], conference_name: str = "") -> str:
     title = str(paper.get("title") or paper.get("arxiv_id") or "Untitled")
     arxiv_id = str(paper.get("arxiv_id") or "")
     status = str(paper.get("status") or "queued")
     issues = list(paper.get("issues") or [])
+    claims = list(paper.get("claims") or [])
+    summary = paper.get("summary") if isinstance(paper.get("summary"), dict) else summarize_claims(claims)
     lines = [f"# {title}", "", arxiv_id]
     author = str(paper.get("author_name") or "").strip()
     if author:
@@ -981,65 +1122,33 @@ def render_report(paper: dict[str, Any], conference_name: str = "") -> str:
     lines.extend(["", "## Verdict", ""])
     if status == "passed":
         lines.append(
-            "Passed. The desk found no fabricated citation, missing number, unsupported claim, or failed rerun."
+            "Passed. The desk found no unresolved citation, missing number, unsupported claim, or failed rerun."
         )
     elif status == "contradicted":
-        count = len(issues) or int(paper.get("issue_count") or 0)
+        count = finding_count(claims, issues) or int(paper.get("issue_count") or 0)
         lines.append(f"Failed. The desk found {count} problem{'s' if count != 1 else ''}.")
     elif status == "error":
         lines.append("Not read. The desk could not open this paper.")
     else:
         lines.append("Not judged yet. Run the list, then open this report again.")
 
-    sentence = _finding_sentence(issues)
-    if sentence:
-        lines.extend(["", sentence])
-
-    failed = [item for item in issues if item.get("issue_type") != "ai_likeness"]
-    lines.extend(["", "## What failed", ""])
-    if status not in _JUDGED:
-        lines.append("This paper has not been judged yet.")
-    elif not failed:
-        lines.append("Nothing failed.")
-    else:
-        for item in failed:
-            kind = _CHECK_LABELS.get(str(item.get("issue_type") or ""), str(item.get("issue_type") or "Check"))
-            lines.extend([f"### {kind}", ""])
-            claim = str(item.get("claim_text") or "").strip()
-            if claim:
-                lines.extend([claim, ""])
-            page = item.get("page")
-            if isinstance(page, int) and page >= 1:
-                lines.append(f"Page {page}.")
-            evidence = str(item.get("evidence_span") or "").strip()
-            if evidence:
-                lines.append(f"> {evidence}")
-            reason = str(item.get("reason") or "").strip()
-            if reason:
-                lines.append(reason)
+    if claims:
+        summary_line = _summary_line(summary)
+        if summary_line:
+            lines.extend(["", summary_line])
+        category_lines = _category_lines(summary)
+        if category_lines:
             lines.append("")
-
-    lines.extend(["## What passed", ""])
-    if status not in _JUDGED:
-        lines.append("Nothing has been checked yet.")
-    elif status == "error":
-        lines.append("The reading did not finish, so no check passed.")
+            lines.extend(category_lines)
+        findings = [claim for claim in claims if is_finding(claim)]
+        for claim in findings:
+            _append_finding_section(lines, claim)
     else:
-        failed_types = {str(item.get("issue_type") or "") for item in failed}
-        passed_lines = []
-        for key, label in _CHECK_LABELS.items():
-            if key == "test":
-                continue
-            if key not in failed_types:
-                passed_lines.append(f"- {label} passed.")
-        kaggle = paper.get("kaggle") if isinstance(paper.get("kaggle"), dict) else {}
-        rerun = str((kaggle or {}).get("status") or "not_run")
-        if rerun == "match":
-            passed_lines.append("- The rerun matched the count written in the paper.")
-        if not passed_lines:
-            lines.append("No check passed.")
-        else:
-            lines.extend(passed_lines)
+        sentence = _finding_sentence(issues)
+        if sentence:
+            lines.extend(["", sentence])
+        if status in _JUDGED:
+            _append_issue_sections(lines, issues)
 
     lines.extend(["", "## Rerun", ""])
     kaggle = paper.get("kaggle") if isinstance(paper.get("kaggle"), dict) else None

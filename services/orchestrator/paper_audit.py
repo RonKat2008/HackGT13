@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import re
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any, Callable
 
@@ -15,6 +16,10 @@ import shelf
 import verify as claim_verify
 
 from models import STAGES
+
+_POOL_WORKERS = 4
+_EVIDENCE_TYPES = frozenset({"semantic", "numerical", "numerical_comparison"})
+_NUMERIC_TYPES = frozenset({"numerical", "numerical_comparison"})
 
 SPECIALISTS = list(STAGES)
 
@@ -153,7 +158,17 @@ def audit_paper(
 
     def evidence() -> None:
         try:
-            evidence_index.attach(path, sections, typed_claims)
+            index = evidence_index.PaperIndex(path, sections)
+            targets = [
+                claim
+                for claim in typed_claims
+                if claim.get("claim_type") in _EVIDENCE_TYPES
+            ]
+
+            def one(claim: dict[str, Any]) -> None:
+                _attach_evidence_claim(index, claim)
+
+            _map_claims(one, targets)
         except Exception:
             pass
         issues.extend(
@@ -165,11 +180,33 @@ def audit_paper(
         )
 
     def citations() -> None:
-        issues.extend(_citation_issues(claims, sections.get("references", "")))
-        reference_index.attach(typed_claims, sections.get("references", ""))
+        refs = sections.get("references", "")
+        issues.extend(_citation_issues(claims, refs))
+        targets = [
+            claim
+            for claim in typed_claims
+            if str(claim.get("claim_type") or "") == "citation"
+        ]
+
+        def one(claim: dict[str, Any]) -> None:
+            reference_index.attach([claim], refs)
+
+        _map_claims(one, targets)
 
     def numbers() -> None:
-        issues.extend(_number_issues(sections.get("abstract", ""), sections.get("results", "")))
+        results_text = str(sections.get("results") or "")
+        issues.extend(_number_issues(sections.get("abstract", ""), results_text))
+        targets = [
+            claim
+            for claim in typed_claims
+            if str(claim.get("claim_type") or "") in _NUMERIC_TYPES
+            and claim.get("section") == "abstract"
+        ]
+
+        def one(claim: dict[str, Any]) -> None:
+            _settle_abstract_number(claim, results_text)
+
+        _map_claims(one, targets)
 
     def tables() -> None:
         return
@@ -300,6 +337,46 @@ _STARTED = {
     "critic": "Reviewing uncertain verdicts.",
     "stamp": "Stamping findings.",
 }
+
+
+def _map_claims(fn: Callable[[dict[str, Any]], None], claims: list[dict[str, Any]]) -> None:
+    if not claims:
+        return
+    with ThreadPoolExecutor(max_workers=_POOL_WORKERS) as pool:
+        futures = [pool.submit(fn, claim) for claim in claims]
+        for future in futures:
+            future.result()
+
+
+def _attach_evidence_claim(index: evidence_index.PaperIndex, claim: dict[str, Any]) -> None:
+    supporting = index.verifier(claim)
+    contradicting = index.falsifier(claim)
+    evidence: list[dict[str, Any]] = []
+    for hit in supporting:
+        evidence.append(
+            {
+                "page": hit.get("page"),
+                "section": hit.get("section") or "",
+                "text": hit.get("text") or "",
+                "role": "supports",
+                "source": "paper",
+            }
+        )
+    for hit in contradicting:
+        evidence.append(
+            {
+                "page": hit.get("page"),
+                "section": hit.get("section") or "",
+                "text": hit.get("text") or "",
+                "role": "contradicts",
+                "source": "paper",
+            }
+        )
+    claim["evidence"] = evidence
+    steps = list(claim.get("steps") or [])
+    steps.append("Retrieved supporting evidence")
+    steps.append("Searched for contradictory evidence")
+    claim["steps"] = steps
 
 
 def _finished_detail(

@@ -46,7 +46,7 @@ todos:
     status: completed
   - id: A8
     content: A8 Report summary block, category lines, stale docs
-    status: pending
+    status: completed
   - id: J1
     content: J1 Integration run on 0000.00003 with real keys; regress 00001/00002
     status: pending
@@ -55,7 +55,7 @@ todos:
     status: pending
   - id: A9
     content: "A9 Stretch: parallel claim pipelines"
-    status: pending
+    status: completed
   - id: B8
     content: "B8 Stretch: provenance graph"
     status: completed

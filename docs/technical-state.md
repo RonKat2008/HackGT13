@@ -112,15 +112,15 @@ These parts can be defended in a demo without pretending the harness is running:
 - A Kaggle probe with a measured AUC (0.940) that is deliberately not allowed to file an issue.
 - One Kaggle claim kernel that reran a public table and matched.
 - A playbook implementation that is tested and unwired, with an explicit rule that agents do not edit their own source.
-- A Jev client that is tested against the Decisions API and used on the older batch path, not on `/desk`.
+- A Jev client that is tested against the Decisions API and called from the desk verify stage.
 
 ## The honesty gap
 
-`docs/pitch.md` says parsers run before any model judgment and that Jev judges a claim against evidence text. That is true of the **batch** path and of the **plan**. It is not true of the **desk** a chair opens.
+Jev and the catalog check are on the desk now. `jev.judge_claims` runs on the verify stage. Citation claims go through Crossref, OpenAlex, and Semantic Scholar. Parsers, MiniLM evidence, and catalog lookup still run before Jev.
 
-If a judge asks “where is the multi-agent recursive harness,” the accurate answer is: the specialist list is the agent trace; the recursion and Jev gate are built beside it and not connected. If they ask “where is Kaggle,” the accurate answer is: two private kernels already ran; the desk does not send each paper to a GPU. If they ask “did you catch the hallucinated citations in the Lancet and NeurIPS papers,” the accurate answer is: the desk catches a citation that is missing from that paper’s own reference list, and a number that is missing from its results. It does not yet resolve a bibliography entry against the outside world.
+The gap that remains is table arithmetic and the bounded critic retry. The `tables` stage and the desk `critic()` return immediately; they are not connected. The playbook loop that would re-read a paper after a patch is still unwired. Do not claim the critic re-reads a claim.
 
-The check that would meet the evidence is still Resolve, pointed at a catalog: this reference does not match a real work. That check is not implemented.
+If a judge asks “where is the multi-agent recursive harness,” the accurate answer is: the specialist list is the agent trace; the recursion is built beside it and not connected. If they ask “where is Kaggle,” the accurate answer is: two private kernels already ran; the desk rerun is the restricted DSL in `repro.py`, not a GPU agent per paper. If they ask “did you catch the hallucinated citations in the Lancet and NeurIPS papers,” the accurate answer is: the desk can now ask outside catalogs whether a bibliography entry matches a real work, and still catches a number that does not survive the results.
 
 ## Constraints that still bind
 
@@ -132,13 +132,13 @@ The check that would meet the evidence is still Resolve, pointed at a catalog: t
 
 ## Files worth opening
 
-- `docs/pitch.md` — shared description. Stale on the report layout and on Jev-as-the-desk-judge.
+- `docs/pitch.md` — shared description. Stage names and the desk judge match the current read path.
 - `docs/plan-orchestrator.md` — the recursive playbook that is not wired to the desk.
 - `docs/plan-arxaudit.md` — product plan. `docs/plan-stormcite.md` is superseded.
 - `services/orchestrator/paper_audit.py` — the ten stages the desk runs.
 - `services/orchestrator/jev.py` — the real Jev client.
-- `services/orchestrator/batches.py` — `_apply_jev`, the path that actually calls Jev.
-- `services/orchestrator/desk.py` — conferences, chat, markdown report. Calls `audit_paper` and does not call `_apply_jev`.
-- `services/orchestrator/repro.py` — the narrow public-table rerun.
+- `services/orchestrator/verify.py` — the desk path that calls Jev.
+- `services/orchestrator/desk.py` — conferences, chat, markdown report. Calls `audit_paper`.
+- `services/orchestrator/repro.py` — the restricted DSL rerun.
 - `kaggle/DATASETS.md` — slugs, kernels, and the private-notebook note.
 - `apps/web/app/desk/` — the chair screen.

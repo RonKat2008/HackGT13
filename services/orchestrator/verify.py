@@ -6,6 +6,8 @@ import hashlib
 import json
 import os
 import re
+import threading
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from typing import Any
 
@@ -14,6 +16,8 @@ from jev import DEFAULT_CAP
 
 JUDGED_TYPES = {"numerical", "numerical_comparison", "semantic"}
 NUMBER_RE = re.compile(r"\d+\.\d+")
+_POOL_WORKERS = 4
+_CACHE_LOCK = threading.Lock()
 
 
 def cache_key(claim_text: str, source_text: str) -> str:
@@ -66,37 +70,50 @@ def finished_sentence(claims: list[dict[str, Any]]) -> str:
 
 def judge_claims(claims: list[dict[str, Any]]) -> None:
     key = os.environ.get("OPENROUTER_API_KEY", "").strip()
-    used = 0
-    for claim in claims:
-        if str(claim.get("claim_type") or "") not in JUDGED_TYPES:
-            continue
-        if not key:
+    judged = [
+        claim
+        for claim in claims
+        if str(claim.get("claim_type") or "") in JUDGED_TYPES
+    ]
+    if not key:
+        for claim in judged:
             _append_step(claim, "Jev not configured")
-            continue
-        if used >= DEFAULT_CAP:
-            continue
-        used += 1
+        return
+
+    to_run = judged[:DEFAULT_CAP]
+
+    def one(claim: dict[str, Any]) -> None:
         source = build_source_text(claim)
-        cached = _read_cache(cache_key(str(claim.get("text") or ""), source))
+        key_hash = cache_key(str(claim.get("text") or ""), source)
+        with _CACHE_LOCK:
+            cached = _read_cache(key_hash)
         if cached is not None:
             _apply(claim, cached["label"], cached["confidence"])
-            continue
+            return
         answer = jev.judge_claim(str(claim.get("text") or ""), source, api_key=key)
         if answer.get("not_run"):
             claim["verdict"] = "not_checked"
             claim["confidence"] = 0.0
-            continue
+            return
         label = str(answer.get("label") or "not_mentioned")
         if label not in {"supported", "contradicted", "not_mentioned"}:
             label = "not_checked"
         score = _confidence(answer.get("confidence"))
         _apply(claim, label, score)
-        _write_cache(
-            cache_key(str(claim.get("text") or ""), source),
-            label,
-            score,
-            answer.get("probs") if isinstance(answer.get("probs"), dict) else {},
-        )
+        with _CACHE_LOCK:
+            _write_cache(
+                key_hash,
+                label,
+                score,
+                answer.get("probs") if isinstance(answer.get("probs"), dict) else {},
+            )
+
+    if not to_run:
+        return
+    with ThreadPoolExecutor(max_workers=_POOL_WORKERS) as pool:
+        futures = [pool.submit(one, claim) for claim in to_run]
+        for future in futures:
+            future.result()
 
 
 def _tagged(item: dict[str, Any]) -> str:
