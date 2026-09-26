@@ -1,4 +1,5 @@
-import { deskFetch, type ConferenceDesk, type Paper } from "@/lib/desk";
+import { deskFetch, EXAMPLE_JOB_ID, type ConferenceDesk, type Paper } from "@/lib/desk";
+import { examplePaper, withExample } from "@/lib/example-paper";
 import { requireDeskUser } from "@/lib/session";
 import Link from "next/link";
 import { PaperRail } from "../../../rail";
@@ -12,17 +13,17 @@ export default async function ReportPage({
 }) {
   const user = await requireDeskUser();
   const { id, jobId } = await params;
-  const [desk, paper] = await Promise.all([
-    deskFetch<ConferenceDesk>(`/desk/conferences/${id}`),
-    deskFetch<Paper>(`/desk/papers/${jobId}`),
-  ]);
+  const desk = await deskFetch<ConferenceDesk>(`/desk/conferences/${id}`);
+  const papers = jobId === EXAMPLE_JOB_ID ? withExample(desk.papers) : desk.papers;
+  const paper: Paper =
+    jobId === EXAMPLE_JOB_ID ? examplePaper() : await deskFetch<Paper>(`/desk/papers/${jobId}`);
   return (
     <DeskShell
       rail={
         <PaperRail
           conferenceId={id}
           name={desk.name}
-          papers={desk.papers}
+          papers={papers}
           running={desk.running}
           activeJobId={jobId}
           email={user.email}

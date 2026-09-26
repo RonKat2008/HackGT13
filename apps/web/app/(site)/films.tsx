@@ -31,7 +31,7 @@ export function Films() {
           <ul className="mt-4 space-y-2 text-sm">
             <li className="film-beat film-d2 flex items-center gap-2">
               <span className="size-1.5 rounded-full bg-[#8c3a2f]" />
-              Hallucinated Metric Paper
+              Unresolved Citation Paper
             </li>
             <li className="film-beat film-d3 flex items-center gap-2">
               <span className="size-1.5 rounded-full bg-[#2f6b4f]" />
@@ -46,7 +46,7 @@ export function Films() {
       <div>
         <Window label="Ask">
           <p className="film-beat film-d1 ml-auto max-w-[14rem] rounded-2xl bg-[#1c1915] px-3 py-2 text-xs leading-5 text-[#f4f0e6]">
-            What failed on Hallucinated Metric Paper?
+            What did the paper claim?
           </p>
           <p className="film-beat film-d3 mt-5 border-l border-[#c4a15a] pl-3 text-sm leading-6">
             The citation (Smith, 2099) does not appear in the references.
@@ -59,7 +59,7 @@ export function Films() {
       <div>
         <Window label="Read">
           <p className="font-[family-name:var(--desk-serif)] text-xl leading-tight">
-            Hallucinated Metric Paper
+            Unresolved Citation Paper
           </p>
           <p className="film-beat film-d2 mt-4 bg-[#f3e6c8] px-3 py-2 text-sm leading-6">
             Accuracy reached 95.2% on the public benchmark (Smith, 2099).
@@ -88,7 +88,7 @@ export function DeskStill() {
           <ul className="mt-5 space-y-3 text-sm">
             <li className="flex gap-2">
               <span className="mt-1.5 size-1.5 rounded-full bg-[#8c3a2f]" />
-              Hallucinated Metric
+              Unresolved Citation
             </li>
             <li className="flex gap-2">
               <span className="mt-1.5 size-1.5 rounded-full bg-[#2f6b4f]" />
@@ -100,7 +100,7 @@ export function DeskStill() {
           <div className="flex flex-col justify-between p-6 sm:p-8">
             <div>
               <p className="text-sm leading-7 text-[#1c1915]">
-                Hallucinated Metric failed a citation.
+                Unresolved Citation needs a citation check.
                 <button type="button" className="mx-1 rounded-full bg-[#f3e6c8] px-2 py-0.5 text-xs" tabIndex={-1}>
                   [1]
                 </button>
@@ -114,7 +114,7 @@ export function DeskStill() {
             </div>
           </div>
           <div className="border-t border-[#e4dcd0] bg-white p-4 sm:border-l sm:border-t-0">
-            <p className="font-[family-name:var(--desk-serif)] text-sm leading-tight">Hallucinated Metric</p>
+            <p className="font-[family-name:var(--desk-serif)] text-sm leading-tight">Unresolved Citation</p>
             <p className="mt-1 text-[11px] text-[#6b645c]">Page 1</p>
             <p className="mt-4 text-[11px] leading-5 text-[#1c1915]">
               Accuracy reached <span className="bg-[#f3e6c8] px-0.5">95.2%</span> (Smith, 2099).

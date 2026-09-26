@@ -43,7 +43,7 @@ todos:
     status: pending
   - id: B7
     content: B7 Rounds, agent names, report page mirror, home copy
-    status: pending
+    status: completed
   - id: A8
     content: A8 Report summary block, category lines, stale docs
     status: pending
@@ -58,7 +58,7 @@ todos:
     status: pending
   - id: B8
     content: "B8 Stretch: provenance graph"
-    status: pending
+    status: completed
   - id: B9
     content: "B9 Stretch: PDF upload (joint)"
     status: pending

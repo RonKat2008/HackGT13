@@ -8,12 +8,19 @@ const steps = [
   },
   {
     name: "Ask",
-    text: "The thread is the desk. Name a paper with @ and ask what failed. The reply stays tied to that paper.",
+    text: "The thread is the desk. Name a paper with @ and ask what the review found. The reply stays tied to that paper.",
   },
   {
     name: "Read",
-    text: "Open the paper. The sentence that failed is marked, and the reason sits beside it.",
+    text: "Open the paper. The claim, the evidence, and the reason sit beside the marked page.",
   },
+];
+
+const questions = [
+  "What did the paper claim?",
+  "What did ArxAudit investigate?",
+  "What evidence did it find?",
+  "Why should the reviewer care?",
 ];
 
 export default function HomePage() {
@@ -57,10 +64,17 @@ export default function HomePage() {
             </li>
           ))}
         </ol>
-        <p className="mt-12 max-w-2xl text-sm leading-7 text-[#1c1915]">
-          An issue is a failed citation, a number missing from the results, weak support, or a failed rerun.
-          A likeness score is not a verdict.
-        </p>
+        <div className="mt-12 max-w-2xl">
+          <p className="text-sm leading-7 text-[#1c1915]">
+            Each finding on the desk answers four questions for the chair:
+          </p>
+          <ol className="mt-4 space-y-2 text-sm leading-7 text-[#1c1915]">
+            {questions.map((question) => (
+              <li key={question}>{question}</li>
+            ))}
+          </ol>
+          <p className="mt-4 text-sm leading-7 text-[#6b645c]">A likeness score is not a verdict.</p>
+        </div>
       </section>
 
       <footer className="border-t border-[#e4dcd0]">

@@ -41,6 +41,28 @@ export function finishedDetail(paper: Paper, name: string): string {
   return event.detail;
 }
 
+const ROUND2_WINDOW =
+  /round\s*2[^.\n]*(widen(?:ed|ing)?|span\s*window)|widen(?:ed|ing)?[^.\n]*round\s*2/i;
+
+function mentionsRound2Window(text: string): boolean {
+  return ROUND2_WINDOW.test(text);
+}
+
+/** Critic row sentence: prefer the finished event detail; else the Round 2 window line when present. */
+export function specialistSentence(paper: Paper, name: string): string {
+  const detail = finishedDetail(paper, name);
+  if (name !== "critic") return detail;
+  if (detail) return detail;
+  const fromEvents = paper.events.some(
+    (event) => event.specialist === "critic" && event.detail && mentionsRound2Window(event.detail),
+  );
+  const fromSteps = (paper.claims ?? []).some((claim) =>
+    (claim.steps ?? []).some((step) => mentionsRound2Window(step)),
+  );
+  if (fromEvents || fromSteps) return "Round 2: widened window";
+  return "";
+}
+
 function outcome(paper: Paper, name: string): "fail" | "pass" | "open" {
   if (cardState(paper, name) !== "done") return "open";
   if (paper.events.some((event) => event.specialist === name && event.state === "failed")) return "fail";
@@ -129,7 +151,7 @@ export function Specialists({
           .map((name) => {
             const state = cardState(paper, name);
             const result = outcome(paper, name);
-            const sentence = finishedDetail(paper, name);
+            const sentence = specialistSentence(paper, name);
             const tone =
               result === "fail" ? "text-[#8c3a2f]" : result === "pass" ? "text-[#2f6b4f]" : "text-[#1c1915]";
             return (
@@ -155,7 +177,7 @@ export function Specialists({
       <div className="mt-6 border-t border-[#e4dcd0] pt-4">
         {paper.status === "passed" && paper.issues.length === 0 ? (
           <p className="text-sm leading-6 text-[#1c1915]">
-            No fabricated citation, missing number, unsupported claim, or failed rerun.
+            No citation gap, missing number, unsupported claim, or failed rerun.
           </p>
         ) : null}
         {paper.status === "error" ? (

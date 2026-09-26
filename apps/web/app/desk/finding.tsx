@@ -9,6 +9,7 @@ import {
   isFinding,
   percent,
 } from "@/lib/verdict";
+import { Provenance } from "./provenance";
 
 const CATALOG_NAME: Record<string, string> = {
   crossref: "Crossref",
@@ -69,6 +70,7 @@ export function FindingCard({
       <p className="mt-1 text-xs text-[#6b645c]">
         {percent(claim.confidence)} · {depthLabel(claim.depth)}
       </p>
+      <Provenance claim={claim} />
       {claim.steps.length > 0 ? (
         <ul className="mt-3 flex flex-col gap-1 text-xs leading-5 text-[#1c1915]">
           {claim.steps.map((step) => (
