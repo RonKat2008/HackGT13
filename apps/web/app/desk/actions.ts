@@ -44,6 +44,41 @@ export async function addPapers(
   return { error: "", added: added + refreshed };
 }
 
+export async function uploadPdf(
+  conferenceId: string,
+  _state: AddState,
+  formData: FormData,
+): Promise<AddState> {
+  const file = formData.get("file");
+  if (!(file instanceof File) || file.size === 0) {
+    return { error: "Choose a PDF to upload.", added: 0 };
+  }
+  const body = new FormData();
+  body.append("file", file);
+  const response = await fetch(`${base}/desk/conferences/${conferenceId}/uploads`, {
+    method: "POST",
+    cache: "no-store",
+    body,
+  });
+  const payload = (await response.json().catch(() => ({}))) as {
+    detail?: string;
+    added?: number;
+  };
+  if (!response.ok) {
+    return {
+      error: typeof payload.detail === "string" ? payload.detail : "That PDF could not be uploaded.",
+      added: 0,
+    };
+  }
+  const added = payload.added ?? 0;
+  if (added === 0) {
+    return { error: "That paper is already on this list.", added: 0 };
+  }
+  revalidatePath(`/desk/${conferenceId}`);
+  revalidatePath("/desk", "layout");
+  return { error: "", added };
+}
+
 export async function deletePaper(conferenceId: string, formData: FormData) {
   const jobId = String(formData.get("job_id") ?? "").trim();
   const open = String(formData.get("open") ?? "") === "1";

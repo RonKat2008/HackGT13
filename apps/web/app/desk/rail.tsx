@@ -3,7 +3,7 @@ import { EXAMPLE_JOB_ID, type ConferenceSummary, type Paper } from "@/lib/desk";
 import { paperLabel, verdictTone } from "@/lib/verdict";
 import { AccountMenu } from "./account";
 import { AddPapersForm } from "./add-form";
-import { addPapers, deletePaper, runQueue } from "./actions";
+import { addPapers, deletePaper, runQueue, uploadPdf } from "./actions";
 import { MorphLink } from "./morph-link";
 
 function dot(status: string): string {
@@ -65,6 +65,7 @@ export function PaperRail({
   email: string;
 }) {
   const add = addPapers.bind(null, conferenceId);
+  const upload = uploadPdf.bind(null, conferenceId);
   const remove = deletePaper.bind(null, conferenceId);
   const run = runQueue.bind(null, conferenceId);
 
@@ -92,7 +93,7 @@ export function PaperRail({
           {running ? "Running" : "Run"}
         </button>
       </form>
-      <AddPapersForm action={add} />
+      <AddPapersForm action={add} uploadAction={upload} />
       <div className="relative z-10 flex gap-3 text-xs">
         <Link href={`/desk/${conferenceId}/reports`} className="underline decoration-[#c4a15a] underline-offset-4">
           Reports

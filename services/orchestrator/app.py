@@ -2,7 +2,7 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from uuid import UUID, uuid4
 
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response
 from pydantic import BaseModel, Field
@@ -17,6 +17,7 @@ from batches import (
 )
 from desk import (
     add_submissions,
+    add_upload,
     ask_conference,
     delete_submission,
     conference_desk,
@@ -305,6 +306,41 @@ def desk_owned_conference(body: OwnedConferenceBody) -> dict:
 def desk_submissions(conference_id: str, body: SubmissionBody) -> dict:
     try:
         return add_submissions(conference_id, body.lines)
+    except BatchError as exc:
+        _batch_http(exc)
+
+
+def _multipart_file_bytes(body: bytes, content_type: str) -> bytes | None:
+    lower = content_type.lower()
+    if "multipart/form-data" not in lower or "boundary=" not in lower:
+        return None
+    boundary = content_type.split("boundary=", 1)[1].strip()
+    if boundary.startswith('"') and boundary.endswith('"'):
+        boundary = boundary[1:-1]
+    delimiter = b"--" + boundary.encode()
+    for chunk in body.split(delimiter):
+        if b'name="file"' not in chunk and b"name=file;" not in chunk and b"name=file\r\n" not in chunk:
+            continue
+        header_end = chunk.find(b"\r\n\r\n")
+        if header_end < 0:
+            continue
+        payload = chunk[header_end + 4 :]
+        if payload.endswith(b"--\r\n"):
+            payload = payload[:-4]
+        elif payload.endswith(b"\r\n"):
+            payload = payload[:-2]
+        return payload
+    return None
+
+
+@app.post("/desk/conferences/{conference_id}/uploads")
+async def desk_uploads(conference_id: str, request: Request) -> dict:
+    try:
+        content_type = request.headers.get("content-type", "")
+        data = _multipart_file_bytes(await request.body(), content_type)
+        if data is None:
+            raise BatchError(400, "file is required")
+        return add_upload(conference_id, data)
     except BatchError as exc:
         _batch_http(exc)
 

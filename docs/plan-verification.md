@@ -61,7 +61,7 @@ todos:
     status: completed
   - id: B9
     content: "B9 Stretch: PDF upload (joint)"
-    status: pending
+    status: completed
 isProject: false
 ---
 

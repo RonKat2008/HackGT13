@@ -245,6 +245,17 @@ def resolve_paper(arxiv_id: str) -> tuple[Path, str]:
         if not path.is_file():
             raise PaperLoadError(f"missing fixture for {arxiv_id}")
         return path, author_name
+    if arxiv_id.startswith("upload-"):
+        prefix = arxiv_id[len("upload-") :]
+        uploads = _arxiv_cache() / "uploads"
+        matches = [
+            path
+            for path in uploads.iterdir()
+            if path.is_file() and path.name.startswith(prefix) and path.suffix.lower() == ".pdf"
+        ] if uploads.is_dir() else []
+        if len(matches) != 1:
+            raise PaperLoadError(f"missing upload for {arxiv_id}")
+        return matches[0], "Unknown"
     if not _NEW_ARXIV_ID.match(arxiv_id):
         raise PaperLoadError(f"unknown arxiv id: {arxiv_id}")
     return _download_arxiv(arxiv_id)

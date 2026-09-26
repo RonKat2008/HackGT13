@@ -25,6 +25,7 @@ from batches import (
     LOCAL_PAPERS,
     BatchError,
     PaperLoadError,
+    _arxiv_cache,
     _db,
     _events_for_jobs,
     _issues_for_jobs,
@@ -404,6 +405,102 @@ def add_submissions(
         "refreshed": refreshed,
         "already": len(ids) - len(fresh),
         "arxiv_ids": fresh,
+    }
+
+
+def add_upload(
+    conference_id: str, data: bytes, owner: str = "organizer"
+) -> dict[str, Any]:
+    if not data:
+        raise BatchError(400, "file is empty")
+    if not data.startswith(b"%PDF"):
+        raise BatchError(400, "file must be a PDF")
+    digest = hashlib.sha256(data).hexdigest()
+    arxiv_id = f"upload-{digest[:8]}"
+    uploads = _arxiv_cache() / "uploads"
+    uploads.mkdir(parents=True, exist_ok=True)
+    dest = uploads / f"{digest}.pdf"
+    if not dest.is_file() or dest.stat().st_size == 0:
+        dest.write_bytes(data)
+    title = "Uploaded paper"
+    try:
+        text = paper_audit.load_paper(dest)
+        for line in text.splitlines():
+            cleaned = line.strip()
+            if cleaned:
+                title = cleaned[:180]
+                break
+    except Exception:
+        title = "Uploaded paper"
+    with _db() as conn:
+        _ensure_desk(conn)
+        conference = conn.execute(
+            "SELECT 1 FROM conferences WHERE conference_id = ?",
+            (conference_id,),
+        ).fetchone()
+        if conference is None:
+            raise BatchError(404, "conference not found")
+        existing = conn.execute(
+            """
+            SELECT paper_jobs.listing_title
+            FROM paper_jobs
+            JOIN batches ON batches.batch_id = paper_jobs.batch_id
+            WHERE batches.conference_id = ? AND paper_jobs.arxiv_id = ?
+            """,
+            (conference_id, arxiv_id),
+        ).fetchone()
+        if existing is not None:
+            listed = (existing["listing_title"] or "").strip() or title
+            return {
+                "conference_id": conference_id,
+                "added": 0,
+                "arxiv_id": arxiv_id,
+                "title": listed,
+            }
+        batch_id = str(uuid4())
+        conn.execute(
+            """
+            INSERT INTO batches (
+                batch_id, kind, name, arxiv_ids, conference_id, created_at
+            ) VALUES (?, 'batch', 'Your list', ?, ?, ?)
+            """,
+            (batch_id, json.dumps([arxiv_id]), conference_id, _now()),
+        )
+        position = conn.execute(
+            """
+            SELECT COALESCE(MAX(paper_jobs.position), -1)
+            FROM paper_jobs
+            JOIN batches ON batches.batch_id = paper_jobs.batch_id
+            WHERE batches.conference_id = ?
+            """,
+            (conference_id,),
+        ).fetchone()[0]
+        position += 1
+        conn.execute(
+            """
+            INSERT INTO paper_jobs (
+                job_id, batch_id, arxiv_id, run_id, status, specialist,
+                fitness, issue_count, author_name, author_email,
+                contacted_at, position, owner, listing_title, abstract
+            ) VALUES (?, ?, ?, ?, 'queued', NULL, NULL, 0, NULL, NULL, NULL, ?, ?, ?, ?)
+            """,
+            (
+                str(uuid4()),
+                batch_id,
+                arxiv_id,
+                str(uuid4()),
+                position,
+                owner,
+                title,
+                "",
+            ),
+        )
+        conn.commit()
+    return {
+        "conference_id": conference_id,
+        "added": 1,
+        "arxiv_id": arxiv_id,
+        "title": title,
     }
 
 
