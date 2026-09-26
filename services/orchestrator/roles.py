@@ -15,6 +15,25 @@ def critic(
     if not allow_list:
         raise ValueError("allow_list must contain at least one specialist")
 
+    if allow_list[0] == "evidence":
+        window = "neighbors:2"
+        if model_json is not None and model_json.get("body") in {"neighbors:1", "neighbors:2"}:
+            window = model_json["body"]
+        return Patch(
+            id=uuid4(),
+            product=Product.ARXAUDIT,
+            kind=PatchKind.SPAN_WINDOW,
+            target="evidence",
+            trigger=verdict_label,
+            body=window,
+            patch_text="Widen the evidence window around the claim.",
+            status=PatchStatus.DRAFT,
+            wins=0,
+            losses=0,
+            fitness_ema=0.0,
+            uses=0,
+        )
+
     body = _FALLBACK_BODY
     patch_text = _FALLBACK_PATCH_TEXT
     if model_json is not None:

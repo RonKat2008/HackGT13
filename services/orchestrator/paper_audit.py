@@ -12,6 +12,7 @@ import evidence as evidence_index
 import probe
 import references as reference_index
 import shelf
+import tables as table_check
 import verify as claim_verify
 
 from models import STAGES
@@ -172,7 +173,7 @@ def audit_paper(
         issues.extend(_number_issues(sections.get("abstract", ""), sections.get("results", "")))
 
     def tables() -> None:
-        return
+        table_check.annotate(path, typed_claims)
 
     def dataset() -> None:
         issues.extend(dataset_issues(claims, text))
@@ -224,10 +225,10 @@ def audit_paper(
 
     def verify() -> None:
         claim_verify.judge_claims(typed_claims)
-        _settle_local(typed_claims, sections, kaggle)
+        _settle_local(typed_claims, sections, kaggle, path)
 
     def critic() -> None:
-        return
+        claim_verify.review_uncertain(typed_claims)
 
     def stamp() -> None:
         collapsed = unique_issues(issues)
@@ -265,7 +266,7 @@ def audit_paper(
             name,
             pages=pages,
             sections=sections,
-            claims=typed_claims if name in {"claims", "verify"} else claims,
+            claims=typed_claims if name in {"claims", "verify", "critic", "tables"} else claims,
             issues=issues,
             kaggle=kaggle,
         )
@@ -347,7 +348,11 @@ def _finished_detail(
             return "1 claim has no support in the methods or results."
         return f"{count} claims have no support in the methods or results."
     if name == "tables":
-        return "No table arithmetic checked yet."
+        checked = sum(1 for claim in claims if isinstance(claim, dict) and claim.get("computation"))
+        if checked == 0:
+            return "No table arithmetic checked yet."
+        unit = "comparison" if checked == 1 else "comparisons"
+        return f"Checked {checked} table {unit}."
     if name == "dataset":
         count = _count(issues, "dataset")
         if count == 0:
@@ -360,7 +365,7 @@ def _finished_detail(
     if name == "verify":
         return claim_verify.finished_sentence(claims)
     if name == "critic":
-        return "No uncertain verdict to review."
+        return claim_verify.critic_sentence(claims)
     count = len(issues)
     if count == 0:
         return "No problem to stamp."
@@ -592,6 +597,7 @@ def _settle_local(
     claims: list[dict[str, Any]],
     sections: dict[str, str],
     kaggle: dict[str, Any],
+    path: str | Path,
 ) -> None:
     references = str(sections.get("references") or "")
     results = str(sections.get("results") or "")
@@ -603,7 +609,7 @@ def _settle_local(
         if kind == "citation":
             _settle_citation(claim, references)
         elif kind in {"numerical", "numerical_comparison"} and claim.get("section") == "abstract":
-            _settle_abstract_number(claim, results)
+            _settle_abstract_number(claim, results, path)
         elif kind == "semantic":
             _settle_semantic(claim, pool)
         elif kind == "dataset":
@@ -633,7 +639,7 @@ def _settle_citation(claim: dict[str, Any], references: str) -> None:
     claim["steps"] = steps
 
 
-def _settle_abstract_number(claim: dict[str, Any], results: str) -> None:
+def _settle_abstract_number(claim: dict[str, Any], results: str, path: str | Path) -> None:
     numbers = NUMBER_RE.findall(str(claim.get("text") or ""))
     if not numbers:
         return
@@ -647,6 +653,37 @@ def _settle_abstract_number(claim: dict[str, Any], results: str) -> None:
         claim["reason"] = f"The number {missing[0]} in the abstract is absent from the results."
     else:
         claim["verdict"] = "supported"
+    snippet = next((line.strip() for line in results.splitlines() if line.strip()), "Results")
+    evidence = list(claim.get("evidence") or [])
+    evidence.append(
+        {
+            "page": claim.get("page") if isinstance(claim.get("page"), int) else _text_page(path, str(claim.get("text") or "")),
+            "section": "abstract",
+            "text": str(claim.get("text") or ""),
+            "role": "contradicts" if missing else "supports",
+            "source": "paper",
+        }
+    )
+    evidence.append(
+        {
+            "page": _text_page(path, snippet),
+            "section": "results",
+            "text": snippet,
+            "role": "contradicts" if missing else "supports",
+            "source": "paper",
+        }
+    )
+    claim["evidence"] = evidence
+
+
+def _text_page(path: str | Path, text: str) -> int | None:
+    if not str(text or "").strip():
+        return None
+    doc = fitz.open(path)
+    try:
+        return claim_extract.find_page(doc, str(text))
+    finally:
+        doc.close()
 
 
 def _settle_semantic(claim: dict[str, Any], pool: set[str]) -> None:
