@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import type { Paper, Quote, ShelfNeighbor } from "@/lib/desk";
+import type { Paper, Quote } from "@/lib/desk";
 import { deletePaper } from "../../actions";
 import { AskDesk } from "../ask";
 import { MorphLink } from "../../morph-link";
@@ -264,7 +264,6 @@ export function Workflow({
           </div>
         </aside>
       </div>
-      {paper.paper_text.trim() ? <Shelf neighbors={paper.neighbors ?? []} /> : null}
     </div>
   );
 }
@@ -284,35 +283,4 @@ function partNote(paper: Paper, part: string): string {
     return "Not judged yet.";
   }
   return finishedDetail(paper, part) || "This stage has not run yet.";
-}
-
-function Shelf({ neighbors }: { neighbors: ShelfNeighbor[] }) {
-  return (
-    <section className="shrink-0 px-6 pb-5 pt-2 lg:px-8">
-      <p className="text-xs text-[#6b645c]">Nearest reference abstracts. This is not a verdict.</p>
-      {neighbors.length === 0 ? (
-        <p className="mt-2 text-sm text-[#6b645c]">No nearby abstracts on the local shelf.</p>
-      ) : (
-        <ul className="mt-3 flex gap-6 overflow-x-auto md:grid md:grid-cols-3">
-          {neighbors.map((neighbor, index) => (
-            <li
-              key={`${neighbor.title}-${neighbor.label}-${index}`}
-              className="desk-rise group w-64 shrink-0 md:w-auto md:min-w-0"
-              style={{ animationDelay: `${index * 80}ms` }}
-            >
-              <p className="truncate font-[family-name:var(--desk-serif)] text-lg leading-snug">
-                {neighbor.title}
-              </p>
-              <p className="mt-1 text-[11px] tracking-[0.12em] text-[#6b645c]">
-                {neighbor.label === "generated" ? "Generated" : "Human"}
-              </p>
-              <p className="mt-2 line-clamp-3 text-sm leading-6 text-[#6b645c]">
-                {neighbor.excerpt}
-              </p>
-            </li>
-          ))}
-        </ul>
-      )}
-    </section>
-  );
 }

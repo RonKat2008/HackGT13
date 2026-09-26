@@ -113,6 +113,13 @@ def test_ask_uses_the_mentioned_paper(tmp_path, monkeypatch):
     assert by_name.status_code == 200
     assert by_name.json()["papers"] == ["0000.00001"]
     assert paper is not None
+    history = client.get(f"/desk/conferences/{conference_id}/messages")
+    assert history.status_code == 200
+    messages = history.json()["messages"]
+    assert [item["role"] for item in messages] == ["you", "desk", "you", "desk"]
+    assert messages[0]["text"] == "What failed on @0000.00001?"
+    assert "Smith, 2099" in messages[1]["text"]
+    assert any(step["kind"] == "quote" for step in messages[1]["trace"])
 
 
 def test_signup_conferences_stay_on_that_account(tmp_path, monkeypatch):

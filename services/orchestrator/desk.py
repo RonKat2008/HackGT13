@@ -65,6 +65,21 @@ def _ensure_desk(conn: Any) -> None:
         conn.execute("ALTER TABLE paper_jobs ADD COLUMN abstract TEXT")
     if "page" not in _columns(conn, "paper_issues"):
         conn.execute("ALTER TABLE paper_issues ADD COLUMN page INTEGER")
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS desk_messages (
+            message_id TEXT PRIMARY KEY,
+            conference_id TEXT NOT NULL,
+            position INTEGER NOT NULL,
+            role TEXT NOT NULL,
+            body TEXT NOT NULL,
+            trace_json TEXT NOT NULL,
+            quotes_json TEXT NOT NULL,
+            papers_json TEXT NOT NULL,
+            created_at TEXT NOT NULL
+        )
+        """
+    )
     conn.commit()
 
 
@@ -672,15 +687,15 @@ def render_report(paper: dict[str, Any], conference_name: str = "") -> str:
             claim = str(item.get("claim_text") or "").strip()
             if claim:
                 lines.extend([claim, ""])
+            page = item.get("page")
+            if isinstance(page, int) and page >= 1:
+                lines.append(f"Page {page}.")
             evidence = str(item.get("evidence_span") or "").strip()
             if evidence:
-                lines.append(f"Evidence: {evidence}")
+                lines.append(f"> {evidence}")
             reason = str(item.get("reason") or "").strip()
             if reason:
                 lines.append(reason)
-            label = str(item.get("jev_label") or "").strip()
-            if label:
-                lines.append(f"Label: {label}")
             lines.append("")
 
     lines.extend(["## What passed", ""])
@@ -741,19 +756,6 @@ def render_report(paper: dict[str, Any], conference_name: str = "") -> str:
                 state = "not reached"
             lines.append(f"- {name.replace('_', ' ')}: {state}")
 
-    lines.extend(["", "## Nearest reference abstracts", "", "Nearest reference abstracts. This is not a verdict.", ""])
-    neighbors = list(paper.get("neighbors") or [])
-    if not neighbors:
-        lines.append("None yet.")
-    else:
-        for neighbor in neighbors:
-            label = "Generated" if str(neighbor.get("label") or "") == "generated" else "Human"
-            neighbor_title = str(neighbor.get("title") or "Untitled")
-            excerpt = str(neighbor.get("excerpt") or "").strip()
-            lines.append(f"- {label}: {neighbor_title}")
-            if excerpt:
-                lines.append(f"  {excerpt}")
-    lines.append("")
     return "\n".join(lines).rstrip() + "\n"
 
 
@@ -845,20 +847,98 @@ def ask_conference(
     else:
         chosen = papers[:6]
     if named and not chosen:
+        answer = "None of those ids are on this conference list."
+        _store_exchange(conference_id, asked, answer, [], [], [])
         return {
-            "answer": "None of those ids are on this conference list.",
+            "answer": answer,
             "papers": [],
             "trace": [],
             "quotes": [],
         }
     answer = _grok_answer(desk["name"], asked, chosen) or _local_answer(chosen)
     trace, quotes = _reading(chosen, answer)
+    cited = [paper["arxiv_id"] for paper in chosen]
+    _store_exchange(conference_id, asked, answer, trace, quotes, cited)
     return {
         "answer": answer,
-        "papers": [paper["arxiv_id"] for paper in chosen],
+        "papers": cited,
         "trace": trace,
         "quotes": quotes,
     }
+
+
+def conference_messages(conference_id: str) -> dict[str, Any]:
+    with _db() as conn:
+        _ensure_desk(conn)
+        row = conn.execute(
+            "SELECT 1 FROM conferences WHERE conference_id = ?",
+            (conference_id,),
+        ).fetchone()
+        if row is None:
+            raise BatchError(404, "conference not found")
+        rows = conn.execute(
+            """
+            SELECT role, body, trace_json, quotes_json, papers_json
+            FROM desk_messages
+            WHERE conference_id = ?
+            ORDER BY position ASC
+            """,
+            (conference_id,),
+        ).fetchall()
+    messages: list[dict[str, Any]] = []
+    for item in rows:
+        message: dict[str, Any] = {"role": item["role"], "text": item["body"]}
+        if item["role"] == "desk":
+            message["trace"] = json.loads(item["trace_json"] or "[]")
+            message["quotes"] = json.loads(item["quotes_json"] or "[]")
+            message["papers"] = json.loads(item["papers_json"] or "[]")
+        messages.append(message)
+    return {"messages": messages}
+
+
+def _store_exchange(
+    conference_id: str,
+    question: str,
+    answer: str,
+    trace: list[dict[str, Any]],
+    quotes: list[dict[str, Any]],
+    papers: list[str],
+) -> None:
+    with _db() as conn:
+        _ensure_desk(conn)
+        position = conn.execute(
+            "SELECT COALESCE(MAX(position), 0) FROM desk_messages WHERE conference_id = ?",
+            (conference_id,),
+        ).fetchone()[0]
+        created = _now()
+        conn.execute(
+            """
+            INSERT INTO desk_messages (
+                message_id, conference_id, position, role, body,
+                trace_json, quotes_json, papers_json, created_at
+            ) VALUES (?, ?, ?, 'you', ?, '[]', '[]', '[]', ?)
+            """,
+            (str(uuid4()), conference_id, int(position) + 1, question, created),
+        )
+        conn.execute(
+            """
+            INSERT INTO desk_messages (
+                message_id, conference_id, position, role, body,
+                trace_json, quotes_json, papers_json, created_at
+            ) VALUES (?, ?, ?, 'desk', ?, ?, ?, ?, ?)
+            """,
+            (
+                str(uuid4()),
+                conference_id,
+                int(position) + 2,
+                answer,
+                json.dumps(trace),
+                json.dumps(quotes),
+                json.dumps(papers),
+                created,
+            ),
+        )
+        conn.commit()
 
 
 def paper_file(job_id: str) -> tuple[bytes, str]:

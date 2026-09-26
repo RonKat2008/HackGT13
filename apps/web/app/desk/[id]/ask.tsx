@@ -72,6 +72,20 @@ export function AskDesk({
     node.scrollTo({ top: node.scrollHeight, behavior: reduce ? "auto" : "smooth" });
   }, [turns, busy]);
 
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      const response = await fetch(`/api/desk/conferences/${conferenceId}/messages`);
+      if (!response.ok || cancelled) return;
+      const body = (await response.json()) as { messages?: Turn[] };
+      if (cancelled || !Array.isArray(body.messages)) return;
+      setTurns((current) => (current.length > 0 ? current : body.messages ?? []));
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [conferenceId]);
+
   function pick(paper: Paper) {
     setDraft((current) => current.replace(/@([^@\n]*)$/, `@${nameOf(paper)} `));
     setMenuOpen(false);

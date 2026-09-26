@@ -20,6 +20,7 @@ from desk import (
     ask_conference,
     delete_submission,
     conference_desk,
+    conference_messages,
     conference_reports_zip,
     create_user_conference,
     link_account,
@@ -385,6 +386,14 @@ def desk_reports_zip(conference_id: str) -> Response:
 def desk_cell(body: CellBody) -> dict:
     try:
         return run_cell(body.code)
+    except BatchError as exc:
+        _batch_http(exc)
+
+
+@app.get("/desk/conferences/{conference_id}/messages")
+def desk_messages(conference_id: str) -> dict:
+    try:
+        return conference_messages(conference_id)
     except BatchError as exc:
         _batch_http(exc)
 
