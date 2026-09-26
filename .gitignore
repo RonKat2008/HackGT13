@@ -22,3 +22,7 @@ venv/
 .pytest_cache/
 playbook.sqlite
 *.sqlite
+
+# Kaggle pulls and fitted model binaries. auc.json and results.json stay tracked.
+kaggle/downloads/
+*.joblib
