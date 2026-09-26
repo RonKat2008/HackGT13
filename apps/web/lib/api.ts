@@ -183,3 +183,25 @@ export async function getBatch(id: string): Promise<BatchDetail> {
   assertServerOnly();
   return requestJson<BatchDetail>(`/batches/${id}`);
 }
+
+export type PatchPaperInput = {
+  author_email?: string | null;
+  contacted_at?: string | null;
+};
+
+export type PatchPaperResult = {
+  paper_id: string;
+  author_email: string | null;
+  contacted_at: string | null;
+};
+
+export async function patchPaper(
+  id: string,
+  body: PatchPaperInput,
+): Promise<PatchPaperResult> {
+  assertServerOnly();
+  return requestJson<PatchPaperResult>(`/papers/${id}`, {
+    method: "PATCH",
+    body: JSON.stringify(body),
+  });
+}

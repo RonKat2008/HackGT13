@@ -1,0 +1,49 @@
+{
+  "conference": {
+    "conference_id": "conf_demo_001",
+    "name": "NeurIPS Audit Track 2026",
+    "contact_email": "chairs@neurips-audit.example.org"
+  },
+  "papers": [
+    {
+      "paper_id": "paper_001",
+      "title": "Retrieval-Augmented Generation for Knowledge-Intensive NLP Tasks",
+      "arxiv_id": "2301.07041",
+      "author_name": "Ada Chen",
+      "author_email": "ada.chen@example.edu",
+      "contacted_at": null,
+      "status": "contradicted",
+      "issues": [
+        {
+          "issue_type": "citation",
+          "claim_text": "Prior work by Smith et al. (2021) reported a 94% F1 on the same retrieval benchmark.",
+          "evidence_span": "We build on retrieval methods that have shown strong results on public benchmarks.",
+          "jev_label": "not_mentioned",
+          "reason": "The cited Smith et al. (2021) result does not appear in the linked reference text."
+        }
+      ]
+    },
+    {
+      "paper_id": "paper_002",
+      "title": "Mistral 7B: Open-Weight Models for Efficient Inference",
+      "arxiv_id": "2310.06825",
+      "author_name": "Ben Okonkwo",
+      "author_email": null,
+      "contacted_at": null,
+      "status": "unresolved",
+      "issues": [
+        {
+          "issue_type": "number",
+          "claim_text": "On the GSM8K holdout the model reaches 92.4% exact match.",
+          "evidence_span": "Table 3 reports GSM8K exact match of 74.1% for the 7B checkpoint.",
+          "jev_label": "contradicted",
+          "reason": "The claimed 92.4% GSM8K exact match is not present in the paper's reported results."
+        }
+      ]
+    }
+  ],
+  "probe": {
+    "auc": 0.54,
+    "hidden": true
+  }
+}

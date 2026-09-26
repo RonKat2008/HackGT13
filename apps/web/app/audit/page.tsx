@@ -51,9 +51,17 @@ export default function AuditPage() {
 
   return (
     <main className="mx-auto flex w-full max-w-6xl flex-1 flex-col px-6 py-10">
-      <h1 className="mb-2 text-2xl font-semibold tracking-tight text-zinc-900">
-        ArxAudit
-      </h1>
+      <header className="mb-2 flex flex-wrap items-baseline gap-4">
+        <h1 className="text-2xl font-semibold tracking-tight text-zinc-900">
+          ArxAudit
+        </h1>
+        <a
+          href="/audit/conferences"
+          className="text-sm text-zinc-700 underline underline-offset-2"
+        >
+          Conference dashboard
+        </a>
+      </header>
       <AuditStart
         jobs={jobs}
         issues={issues}
