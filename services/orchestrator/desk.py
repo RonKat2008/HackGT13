@@ -863,8 +863,8 @@ def paper_desk(job_id: str) -> dict[str, Any]:
 
 
 _FIXTURE_TITLES = {
-    "0000.00001": "Hallucinated Metric Paper",
-    "0000.00002": "Measured Metric Paper",
+    "0000.00001": "Reported Accuracy on a Public Benchmark",
+    "0000.00002": "Measured Accuracy on a Public Benchmark",
     "0000.00003": "Adaptive Reasoning Systems",
 }
 

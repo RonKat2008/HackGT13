@@ -129,6 +129,39 @@ def test_notebook_cell_still_compiles(tmp_path: Path) -> None:
     assert "rows 3" in completed.stdout
 
 
+def test_kaggle_paper_checks_rows_counts_and_means(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    frame = pd.DataFrame(
+        {
+            "Survived": [1] * 342 + [0] * 549,
+            "Pclass": [1] * 216 + [2] * 184 + [3] * 491,
+            "Age": [29.6991] * 891,
+            "Fare": [32.2042] * 891,
+        }
+    )
+    path = tmp_path / "Titanic-Dataset.csv"
+    frame.to_csv(path, index=False)
+    monkeypatch.setattr(repro, "DOWNLOADS", tmp_path)
+    monkeypatch.setattr(repro, "download_table", lambda *_args: None)
+    sections = split_sections(load_paper(FIXTURES / "kaggle_paper.pdf"))
+    result = repro.reproduce([], sections, model=lambda _prompt: (_ for _ in ()).throw(AssertionError("model")))
+    by_check = {(item["formula"], item["expected"]): item for item in result}
+    assert by_check[("ROWS()", 891)]["status"] == "reproduced"
+    assert by_check[("ROWS()", 891)]["actual"] == 891
+    assert by_check[("COUNT_EQ(Survived, 1)", 342)]["status"] == "reproduced"
+    assert by_check[("COUNT_EQ(Survived, 1)", 342)]["actual"] == 342
+    first_true = by_check[("COUNT_EQ(Pclass, 1)", 216)]
+    first_false = by_check[("COUNT_EQ(Pclass, 1)", 317)]
+    assert first_true["status"] == "reproduced"
+    assert first_true["actual"] == 216
+    assert first_false["status"] == "could_not_reproduce"
+    assert first_false["actual"] == 216
+    assert by_check[("MEAN(Age)", 29.7)]["status"] == "reproduced"
+    assert by_check[("MEAN(Fare)", 80.0)]["status"] == "could_not_reproduce"
+    assert by_check[("MEAN(Fare)", 80.0)]["actual"] == 32.2042
+    assert all(item["dataset_slug"] == "yasserh/titanic-dataset" for item in result)
+    assert all("code" not in item for item in result)
+
+
 def test_audit_records_a_failed_rerun() -> None:
     calls: list[tuple[str, str, str]] = []
 

@@ -7,7 +7,7 @@ os.environ["ARX_EMBEDDER"] = "hash"
 from jev import DEFAULT_CAP
 from models import Evidence, is_finding
 from paper_audit import audit_paper
-from verify import build_source_text, cache_key, finished_sentence, judge_claims
+from verify import build_source_text, cache_key, finished_sentence, judge_claims, review_uncertain
 
 FIXTURES = Path(__file__).resolve().parents[1] / "fixtures"
 HALLUCINATED = FIXTURES / "hallucinated.pdf"
@@ -444,3 +444,44 @@ def test_only_numerical_comparison_and_semantic_are_sent(tmp_path, monkeypatch) 
     assert {claim["verdict"] for claim in claims[:3]} == {"supported"}
     assert claims[3]["verdict"] == "not_checked"
     assert claims[4]["verdict"] == "not_checked"
+
+
+def test_number_contradiction_survives_a_disagreeing_jev(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("RUN_DB", str(tmp_path / "cache.sqlite"))
+    monkeypatch.setenv("OPENROUTER_API_KEY", "test-openrouter-key-not-real")
+    claim = _claim("Our model achieves 95.2% accuracy on the held-out benchmark.", "numerical")
+    claim["verdict"] = "contradicted"
+    claim["confidence"] = 1.0
+    claim["steps"].append("Compared the abstract number with the results.")
+
+    def judge(*_args, **_kwargs):
+        return {"label": "not_mentioned", "confidence": 0.02, "probs": {}, "not_run": False}
+
+    monkeypatch.setattr("jev.judge_claim", judge)
+    judge_claims([claim])
+    assert claim["verdict"] == "contradicted"
+    assert claim["confidence"] == 1.0
+    assert "Jev judgment" in claim["steps"]
+    assert is_finding(claim)
+
+
+def test_critic_does_not_reopen_a_number_contradiction(monkeypatch) -> None:
+    monkeypatch.setenv("ARX_ROUNDS", "live")
+    monkeypatch.setenv("OPENROUTER_API_KEY", "test-openrouter-key-not-real")
+    claim = _claim("Our model achieves 95.2% accuracy on the held-out benchmark.", "numerical")
+    claim["verdict"] = "contradicted"
+    claim["confidence"] = 0.02
+    claim["steps"].extend(
+        [
+            "Compared the abstract number with the results.",
+            "Jev judgment",
+        ]
+    )
+
+    def boom(*_args, **_kwargs):
+        raise AssertionError("a settled number contradiction must stay settled")
+
+    monkeypatch.setattr("verify.critic", boom)
+    monkeypatch.setattr("jev.judge_claim", boom)
+    review_uncertain([claim])
+    assert claim["verdict"] == "contradicted"

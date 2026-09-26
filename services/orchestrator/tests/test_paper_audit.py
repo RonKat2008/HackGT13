@@ -46,8 +46,8 @@ def _write_pdf(path: Path, text: str) -> Path:
 def test_load_paper_includes_both_titles() -> None:
     hallucinated = load_paper(HALLUCINATED)
     human = load_paper(HUMAN)
-    assert "Hallucinated Metric Paper" in hallucinated
-    assert "Measured Metric Paper" in human
+    assert "Reported Accuracy on a Public Benchmark" in hallucinated
+    assert "Measured Accuracy on a Public Benchmark" in human
 
 
 def test_load_paper_does_not_use_http(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -359,7 +359,37 @@ def test_kaggle_mismatch_emits_test_issue(tmp_path: Path) -> None:
     assert "test" in _issue_types(result)
 
 
+def test_repro_results_attach_to_the_dataset_claim() -> None:
+    demo = FIXTURES / "demo_paper.pdf"
+
+    def repro(claims: list[dict], _sections: dict) -> list[dict]:
+        target = next(claim for claim in claims if "317" in str(claim.get("text") or ""))
+        return [
+            {
+                "claim_id": target["claim_id"],
+                "dataset_slug": "yasserh/titanic-dataset",
+                "resolution": "match",
+                "spec": {"operation": "COUNT_EQ", "column": "Pclass", "equals": 1},
+                "actual": 216,
+                "expected": 317,
+                "status": "could_not_reproduce",
+                "steps": ["Executed COUNT_EQ"],
+                "log": "computed 216, claimed 317",
+                "formula": "COUNT_EQ(Pclass, 1)",
+            }
+        ]
+
+    result = audit_paper(demo, "job-attach", repro=repro)
+    claim = next(item for item in result["claims"] if "317" in str(item.get("text") or ""))
+    assert claim["verdict"] == "could_not_reproduce"
+    assert claim["computation"]["actual"] == 216
+    assert claim["computation"]["formula"] == "COUNT_EQ(Pclass, 1)"
+
+
 def test_audit_does_not_call_openrouter_or_xai(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+    monkeypatch.delenv("XAI_API_KEY", raising=False)
+
     def boom(*args: object, **kwargs: object) -> None:
         raise AssertionError("paper audit must stay offline")
 

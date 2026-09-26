@@ -221,9 +221,11 @@ def audit_paper(
             kaggle = _kaggle_result(results_path)
         elif repro is not None:
             try:
-                produced = repro(claims, sections)
+                produced = repro(typed_claims or claims, sections)
             except Exception:
                 produced = None
+            if isinstance(produced, list):
+                _attach_computations(typed_claims, produced)
             if isinstance(produced, dict):
                 kaggle = produced
             elif isinstance(produced, list):
@@ -777,6 +779,30 @@ def _settle_semantic(claim: dict[str, Any], pool: set[str]) -> None:
         claim["verdict"] = "supported"
         steps.append("The claim shares wording with the methods or results.")
     claim["steps"] = steps
+
+
+def _attach_computations(claims: list[dict[str, Any]], computations: list[dict[str, Any]]) -> None:
+    by_id = {str(claim.get("claim_id")): claim for claim in claims if claim.get("claim_id")}
+    for comp in computations:
+        if not isinstance(comp, dict):
+            continue
+        status = str(comp.get("status") or "")
+        if status not in {"reproduced", "could_not_reproduce"}:
+            continue
+        claim = by_id.get(str(comp.get("claim_id") or ""))
+        if claim is None:
+            continue
+        claim["computation"] = comp
+        claim["verdict"] = status
+        claim["confidence"] = 1.0
+        if status == "could_not_reproduce":
+            claim["reason"] = str(comp.get("log") or "The public table does not match the paper.")
+        steps = list(claim.get("steps") or [])
+        for step in comp.get("steps") or []:
+            text = str(step)
+            if text not in steps:
+                steps.append(text)
+        claim["steps"] = steps
 
 
 def _settle_dataset(claim: dict[str, Any], kaggle: dict[str, Any]) -> None:

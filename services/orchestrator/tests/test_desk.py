@@ -108,7 +108,7 @@ def test_ask_uses_the_mentioned_paper(tmp_path, monkeypatch):
     )
     by_name = client.post(
         f"/desk/conferences/{conference_id}/ask",
-        json={"question": "What failed on Hallucinated Metric Paper?", "mentions": []},
+        json={"question": "What failed on Reported Accuracy on a Public Benchmark?", "mentions": []},
     )
     assert by_name.status_code == 200
     assert by_name.json()["papers"] == ["0000.00001"]
@@ -329,7 +329,7 @@ def test_second_add_keeps_one_copy_with_title_and_delete(tmp_path, monkeypatch):
     assert first.json()["added"] == 2
     papers = client.get(f"/desk/conferences/{conference_id}").json()["papers"]
     assert [paper["arxiv_id"] for paper in papers] == ["0000.00001", "1706.03762"]
-    assert papers[0]["title"] == "Hallucinated Metric Paper"
+    assert papers[0]["title"] == "Reported Accuracy on a Public Benchmark"
     assert "95.2" in papers[0]["abstract"]
     assert papers[1]["title"] == "Attention Is All You Need"
     assert papers[1]["abstract"] == "The dominant sequence transduction models."

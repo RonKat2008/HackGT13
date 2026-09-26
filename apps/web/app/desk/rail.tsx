@@ -79,9 +79,6 @@ export function PaperRail({
         <p className="mt-1 text-[11px] text-[#6b645c]">{papers.length} papers</p>
       </div>
       <form action={run} className="relative z-10 flex shrink-0 items-center gap-2">
-        {activeJobId ? (
-          <input type="hidden" name="return" value={`/desk/${conferenceId}/${activeJobId}`} />
-        ) : null}
         <input
           name="cap"
           inputMode="numeric"

@@ -54,13 +54,15 @@ export function DeskViews({
   conferenceName,
   initial,
   example = false,
+  initialView = "chat",
 }: {
   conferenceId: string;
   conferenceName: string;
   initial: Paper[];
   example?: boolean;
+  initialView?: "chat" | "summary";
 }) {
-  const [view, setView] = useState<"chat" | "summary">(example ? "summary" : "chat");
+  const [view, setView] = useState<"chat" | "summary">(example || initialView === "summary" ? "summary" : "chat");
   const [papers, setPapers] = useState(initial);
   const moving = papers.some((paper) => paper.status === "queued" || paper.status === "running");
 

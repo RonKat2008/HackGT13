@@ -21,6 +21,7 @@ from roles import critic
 
 JUDGED_TYPES = {"numerical", "numerical_comparison", "semantic"}
 NUMBER_RE = re.compile(r"\d+\.\d+")
+NUMBER_CHECK = "Compared the abstract number with the results."
 _POOL_WORKERS = 4
 _CACHE_LOCK = threading.Lock()
 REVIEW_CONFIDENCE = 0.70
@@ -96,7 +97,7 @@ def review_uncertain(
     if not key or (os.environ.get("PYTEST_CURRENT_TEST") and os.environ.get("ARX_ROUNDS") != "live"):
         return
     for claim in claims:
-        if not _uncertain(claim):
+        if _number_contradicted(claim) or not _uncertain(claim):
             continue
         original = str(claim.get("text") or "")
         claim["rounds"] = max(int(claim.get("rounds") or 0), 1)
@@ -195,18 +196,19 @@ def judge_claims(claims: list[dict[str, Any]]) -> None:
         with _CACHE_LOCK:
             cached = _read_cache(key_hash)
         if cached is not None:
-            _apply(claim, cached["label"], cached["confidence"])
+            _remember(claim, cached["label"], cached["confidence"])
             return
         answer = jev.judge_claim(str(claim.get("text") or ""), source, api_key=key)
         if answer.get("not_run"):
-            claim["verdict"] = "not_checked"
-            claim["confidence"] = 0.0
+            if not _number_contradicted(claim):
+                claim["verdict"] = "not_checked"
+                claim["confidence"] = 0.0
             return
         label = str(answer.get("label") or "not_mentioned")
         if label not in {"supported", "contradicted", "not_mentioned"}:
             label = "not_checked"
         score = _confidence(answer.get("confidence"))
-        _apply(claim, label, score)
+        _remember(claim, label, score)
         with _CACHE_LOCK:
             _write_cache(
                 key_hash,
@@ -229,6 +231,19 @@ def _tagged(item: dict[str, Any]) -> str:
     if isinstance(page, int):
         return f"[p.{page}] {text}".strip()
     return text
+
+
+def _number_contradicted(claim: dict[str, Any]) -> bool:
+    if str(claim.get("verdict") or "") != "contradicted":
+        return False
+    return any(NUMBER_CHECK in str(step) for step in (claim.get("steps") or []))
+
+
+def _remember(claim: dict[str, Any], label: str, score: float) -> None:
+    if _number_contradicted(claim) and label != "contradicted":
+        _append_step(claim, "Jev judgment")
+        return
+    _apply(claim, label, score)
 
 
 def _apply(claim: dict[str, Any], label: str, score: float) -> None:

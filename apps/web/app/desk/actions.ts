@@ -100,8 +100,6 @@ export async function runQueue(conferenceId: string, formData: FormData) {
     method: "POST",
     body: JSON.stringify({ cap }),
   });
-  const next = String(formData.get("return") ?? "");
-  const prefix = `/desk/${conferenceId}/`;
-  if (next.startsWith(prefix) && !next.includes("..")) redirect(next);
-  redirect(`/desk/${conferenceId}`);
+  revalidatePath(`/desk/${conferenceId}`);
+  revalidatePath("/desk", "layout");
 }
