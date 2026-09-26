@@ -6,6 +6,14 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
+from batches import (
+    BatchError,
+    create_batch,
+    create_conference,
+    get_batch,
+    get_conference,
+    patch_paper,
+)
 from fitness import record_result, score
 from loop import run_loop
 from models import JevLabel, Patch, PatchKind, PatchStatus, Product, Run
@@ -27,6 +35,28 @@ class CreateRunBody(BaseModel):
     product: Product
     goal: str = Field(min_length=1)
     fixture: bool
+
+
+class CreateBatchBody(BaseModel):
+    product: str
+    kind: str
+    name: str | None
+    arxiv_ids: list[str]
+    conference_id: str | None = None
+
+
+class CreateConferenceBody(BaseModel):
+    name: str = Field(min_length=1)
+    contact_email: str = Field(min_length=1)
+
+
+class PatchPaperBody(BaseModel):
+    author_email: str | None = None
+    contacted_at: str | None = None
+
+
+def _batch_http(exc: BatchError) -> None:
+    raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
 
 
 @contextmanager
@@ -140,4 +170,44 @@ def list_playbook(product: Product) -> list[Patch]:
 @app.post("/voice/token")
 def voice_token() -> None:
     raise HTTPException(status_code=501, detail="not implemented")
+
+
+@app.post("/batches")
+def post_batch(body: CreateBatchBody) -> dict:
+    try:
+        return create_batch(body.model_dump())
+    except BatchError as exc:
+        _batch_http(exc)
+
+
+@app.get("/batches/{batch_id}")
+def read_batch(batch_id: str) -> dict:
+    try:
+        return get_batch(batch_id)
+    except BatchError as exc:
+        _batch_http(exc)
+
+
+@app.post("/conferences")
+def post_conference(body: CreateConferenceBody) -> dict:
+    try:
+        return create_conference(body.model_dump())
+    except BatchError as exc:
+        _batch_http(exc)
+
+
+@app.get("/conferences/{conference_id}")
+def read_conference(conference_id: str) -> dict:
+    try:
+        return get_conference(conference_id)
+    except BatchError as exc:
+        _batch_http(exc)
+
+
+@app.patch("/papers/{job_id}")
+def update_paper(job_id: str, body: PatchPaperBody) -> dict:
+    try:
+        return patch_paper(job_id, body.model_dump())
+    except BatchError as exc:
+        _batch_http(exc)
 
