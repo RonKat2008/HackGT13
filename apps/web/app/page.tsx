@@ -11,8 +11,14 @@ async function startRun(formData: FormData) {
   if (!goal) {
     redirect(`/?error=${encodeURIComponent("Goal is required.")}`);
   }
-  if (product !== "stormcite" && product !== "landfall") {
-    redirect(`/?error=${encodeURIComponent("Product must be stormcite or landfall.")}`);
+  if (
+    product !== "stormcite" &&
+    product !== "landfall" &&
+    product !== "arxaudit"
+  ) {
+    redirect(
+      `/?error=${encodeURIComponent("Product must be stormcite, landfall, or arxaudit.")}`,
+    );
   }
 
   let run;
@@ -76,9 +82,10 @@ export default async function Home({ searchParams }: PageProps<"/">) {
             id="product"
             name="product"
             required
-            defaultValue="stormcite"
+            defaultValue="arxaudit"
             className="rounded border border-zinc-300 px-3 py-2 text-zinc-900 shadow-sm focus:border-zinc-500 focus:outline-none focus:ring-1 focus:ring-zinc-500"
           >
+            <option value="arxaudit">arxaudit</option>
             <option value="stormcite">stormcite</option>
             <option value="landfall">landfall</option>
           </select>

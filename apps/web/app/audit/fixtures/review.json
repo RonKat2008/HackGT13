@@ -1,0 +1,70 @@
+{
+  "batch": {
+    "batch_id": "batch_demo_001",
+    "kind": "links",
+    "name": null,
+    "arxiv_ids": ["2301.07041", "2310.06825"],
+    "created_at": "2026-09-25T18:00:00Z"
+  },
+  "jobs": [
+    {
+      "job_id": "job_001",
+      "batch_id": "batch_demo_001",
+      "arxiv_id": "2301.07041",
+      "run_id": "run_001",
+      "status": "passed",
+      "specialist": "jev",
+      "fitness": 0.82,
+      "issue_count": 1,
+      "author_name": "Ada Chen",
+      "author_email": "ada.chen@example.edu",
+      "contacted_at": null
+    },
+    {
+      "job_id": "job_002",
+      "batch_id": "batch_demo_001",
+      "arxiv_id": "2310.06825",
+      "run_id": "run_002",
+      "status": "running",
+      "specialist": "support",
+      "fitness": 0.0,
+      "issue_count": 0,
+      "author_name": "Ben Okonkwo",
+      "author_email": null,
+      "contacted_at": null
+    }
+  ],
+  "issues": [
+    {
+      "issue_type": "citation",
+      "claim_text": "Prior work by Smith et al. (2021) reported a 94% F1 on the same retrieval benchmark.",
+      "evidence_span": "We build on retrieval methods that have shown strong results on public benchmarks.",
+      "jev_label": "not_mentioned",
+      "reason": "The cited Smith et al. (2021) result does not appear in the linked reference text."
+    }
+  ],
+  "neighbors": [
+    {
+      "title": "Dense Passage Retrieval for Open-Domain Question Answering",
+      "label": "human",
+      "text": "We show that retrieval can be practically implemented using dense representations alone, where embeddings are learned from a small number of questions and passages by a simple dual-encoder framework.",
+      "cosine": 0.81
+    },
+    {
+      "title": "A Survey of Retrieval-Augmented Generation Methods",
+      "label": "ai",
+      "text": "This survey reviews retrieval-augmented generation pipelines, covering document indexing, query rewriting, and fusion strategies across open-domain QA and long-form summarization tasks.",
+      "cosine": 0.74
+    },
+    {
+      "title": "Learning Sparse Neural Networks Through L0 Regularization",
+      "label": "human",
+      "text": "We propose a practical method for L0-norm regularization that allows efficient learning of sparse neural networks with competitive accuracy on image classification benchmarks.",
+      "cosine": 0.41
+    }
+  ],
+  "probe": {
+    "auc": 0.54,
+    "hidden": true
+  }
+}

@@ -1,4 +1,4 @@
-export type Product = "stormcite" | "landfall";
+export type Product = "stormcite" | "landfall" | "arxaudit";
 
 export type Patch = {
   id: string;
