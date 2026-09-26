@@ -202,6 +202,9 @@ def audit_paper(
             )
 
     def jev() -> None:
+        collapsed = unique_issues(issues)
+        issues.clear()
+        issues.extend(collapsed)
         for issue in issues:
             issue["jev_label"] = "contradicted"
             reason = str(issue.get("reason") or "").strip()
@@ -287,7 +290,13 @@ def _finished_detail(
         unit = "claim" if count == 1 else "claims"
         return f"Pulled {count} {unit}."
     if name == "resolve":
-        count = _count(issues, "citation")
+        count = len(
+            {
+                " ".join(str(issue.get("evidence_span") or "").split()).lower()
+                for issue in issues
+                if issue.get("issue_type") == "citation" and str(issue.get("evidence_span") or "").strip()
+            }
+        )
         if count == 0:
             return "Citations match the reference list."
         if count == 1:
@@ -404,6 +413,36 @@ def _page_has(page: Any, needles: list[str]) -> bool:
         except Exception:
             continue
     return False
+
+
+def unique_issues(issues: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Keep one copy of a finding that names the same span and the same reason."""
+    kept: list[dict[str, Any]] = []
+    seen: dict[tuple[str, str], int] = {}
+    for issue in issues:
+        kind = str(issue.get("issue_type") or "")
+        span = " ".join(str(issue.get("evidence_span") or "").split()).lower()
+        reason = " ".join(str(issue.get("reason") or "").split()).lower()
+        key = (kind, span or reason)
+        if key in seen:
+            prior = kept[seen[key]]
+            prior["_repeats"] = int(prior.get("_repeats") or 1) + 1
+            continue
+        copy = dict(issue)
+        copy["_repeats"] = 1
+        seen[key] = len(kept)
+        kept.append(copy)
+    for issue in kept:
+        repeats = int(issue.pop("_repeats", 1))
+        if repeats > 1 and issue.get("issue_type") == "support":
+            issue["reason"] = (
+                f"{repeats} claims share no content word of length 4 or more with methods or results."
+            )
+        span = " ".join(str(issue.get("evidence_span") or "").split())
+        claim = " ".join(str(issue.get("claim_text") or "").split())
+        if len(span) > 180 and claim:
+            issue["evidence_span"] = claim
+    return kept
 
 
 def _issue(issue_type: str, claim_text: str, evidence_span: str, reason: str) -> dict[str, Any]:

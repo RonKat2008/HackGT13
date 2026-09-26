@@ -206,6 +206,27 @@ def test_resolve_finished_detail_says_a_citation_does_not_resolve() -> None:
     assert citation["page"] >= 1
 
 
+def test_repeated_citation_is_one_issue(tmp_path: Path) -> None:
+    path = _write_pdf(
+        tmp_path / "repeat.pdf",
+        "Repeat Paper\n\n"
+        "Abstract\n"
+        "Accuracy reached 95.2% on the public benchmark (Smith, 2099).\n"
+        "A later sentence cites the same missing source (Smith, 2099).\n\n"
+        "Methods\n"
+        "We fit a linear probe.\n\n"
+        "Results\n"
+        "The model score was 12.\n\n"
+        "References\n"
+        "Lee, 2020. A measured study.\n",
+    )
+    _calls, recorder = _collecting_recorder()
+    result = audit_paper(path, "job-repeat", recorder=recorder)
+    citations = [issue for issue in result["issues"] if issue["issue_type"] == "citation"]
+    assert len(citations) == 1
+    assert "Smith, 2099" in citations[0]["evidence_span"]
+
+
 def test_failed_citation_stays_in_issue_list() -> None:
     _calls, recorder = _collecting_recorder()
     result = audit_paper(HALLUCINATED, "job-keep", recorder=recorder)

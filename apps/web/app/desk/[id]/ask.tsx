@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { Paper, Quote, TraceStep } from "@/lib/desk";
+import { GoldThread } from "../gold-thread";
 import { MorphLink } from "../morph-link";
 import { PdfView } from "../pdf-view";
 
@@ -43,6 +44,7 @@ export function AskDesk({
   const [cursor, setCursor] = useState(0);
   const [cursorQuery, setCursorQuery] = useState<string | null>(null);
   const [panel, setPanel] = useState<Panel | null>(null);
+  const [threadFrom, setThreadFrom] = useState<HTMLElement | null>(null);
   const threadRef = useRef<HTMLDivElement>(null);
   const fieldRef = useRef<HTMLTextAreaElement>(null);
   const markerRef = useRef<HTMLButtonElement | null>(null);
@@ -77,7 +79,10 @@ export function AskDesk({
   }
 
   function openQuote(quote: Quote, button?: HTMLButtonElement | null) {
-    if (button) markerRef.current = button;
+    if (button) {
+      markerRef.current = button;
+      setThreadFrom(quote.text ? button : null);
+    }
     if (onOpenQuote) {
       onOpenQuote(quote);
       return;
@@ -89,6 +94,7 @@ export function AskDesk({
     if (button) markerRef.current = button;
     const unread = !paper.paper_text.trim() && paper.status !== "passed" && paper.status !== "contradicted";
     if (unread) {
+      setThreadFrom(null);
       const quote: Quote = {
         quote_id: `unread-${paper.job_id}`,
         job_id: paper.job_id,
@@ -121,6 +127,7 @@ export function AskDesk({
 
   function closePanel() {
     setPanel(null);
+    setThreadFrom(null);
     markerRef.current?.focus();
   }
 
@@ -178,7 +185,8 @@ export function AskDesk({
   const passageOpen = panel !== null && !onOpenQuote;
 
   return (
-    <section className="flex min-h-0 flex-1 flex-col lg:flex-row">
+    <section className="relative flex min-h-0 flex-1 flex-col lg:flex-row">
+      <GoldThread from={threadFrom} />
       <div className="flex min-h-0 min-w-0 flex-1 flex-col">
         <div ref={threadRef} className="min-h-0 flex-1 overflow-y-auto px-6 py-8">
           <div className={`mx-auto flex min-h-full w-full flex-col ${embedded ? "" : "max-w-2xl"}`}>

@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import type { Issue, Paper } from "@/lib/desk";
 
-const ORDER = [
+export const ORDER = [
   "ingest",
   "sections",
   "retrieve",
@@ -16,7 +16,7 @@ const ORDER = [
   "jev",
 ] as const;
 
-const LABELS: Record<string, string> = {
+export const LABELS: Record<string, string> = {
   ingest: "Ingest",
   sections: "Sections",
   retrieve: "Retrieve",
@@ -29,7 +29,7 @@ const LABELS: Record<string, string> = {
   jev: "Stamp",
 };
 
-function finishedDetail(paper: Paper, name: string): string {
+export function finishedDetail(paper: Paper, name: string): string {
   const event = [...paper.events]
     .reverse()
     .find((item) => item.specialist === name && item.state === "finished");
@@ -46,14 +46,30 @@ function cardState(paper: Paper, name: string): "idle" | "now" | "done" {
   return "idle";
 }
 
+const ISSUE_OF: Record<string, string[]> = {
+  resolve: ["citation"],
+  numbers: ["number"],
+  support: ["support", "dataset"],
+  kaggle_runner: ["test"],
+  jev: ["citation", "number", "support", "dataset", "test"],
+  result: ["citation", "number", "support", "dataset", "test"],
+};
+
+export function issueIndexForPart(paper: Paper, part: string): number {
+  const types = ISSUE_OF[part] ?? [];
+  return paper.issues.findIndex((issue) => types.includes(issue.issue_type));
+}
+
 export function Specialists({
   paper,
   selected,
   onSelect,
+  focus = "",
 }: {
   paper: Paper;
   selected: number;
   onSelect: (index: number) => void;
+  focus?: string;
 }) {
   const [announcement, setAnnouncement] = useState("");
   const finished = paper.events.filter((event) => event.state === "finished").length;
@@ -80,9 +96,10 @@ export function Specialists({
           return (
             <li
               key={name}
-              className={state === "done" ? "desk-rise" : ""}
+              className={`${state === "done" ? "desk-rise" : ""} ${focus === name ? "rounded-xl bg-white px-2 py-2 ring-1 ring-[#c4a15a]" : ""}`}
             >
               <p className="text-sm text-[#1c1915]">{LABELS[name]}</p>
+              {state === "now" ? <span className="desk-rule mt-1" /> : null}
               {state === "now" ? (
                 <p className="mt-1 flex items-center gap-2 text-xs text-[#8a6a2f]">
                   <span className="desk-pulse inline-block size-1.5 rounded-full bg-[#c4a15a]" />

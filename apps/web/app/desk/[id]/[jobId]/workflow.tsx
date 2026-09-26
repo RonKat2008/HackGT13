@@ -6,7 +6,7 @@ import { deletePaper } from "../../actions";
 import { AskDesk } from "../ask";
 import { MorphLink } from "../../morph-link";
 import { PdfView } from "../../pdf-view";
-import { issueQuote, Specialists } from "../../specialists";
+import { finishedDetail, issueIndexForPart, issueQuote, Specialists } from "../../specialists";
 
 const STARTER = `rate = 20 + 22
 print("cell result", rate)
@@ -17,11 +17,13 @@ export function Workflow({
   conferenceName,
   papers,
   initial,
+  part = "",
 }: {
   conferenceId: string;
   conferenceName: string;
   papers: Paper[];
   initial: Paper;
+  part?: string;
 }) {
   const [paper, setPaper] = useState(initial);
   const [cells, setCells] = useState([
@@ -66,6 +68,19 @@ export function Workflow({
     }, 800);
     return () => clearInterval(timer);
   }, [paper.job_id, paper.status]);
+
+  useEffect(() => {
+    if (!part) return;
+    const index = issueIndexForPart(paper, part);
+    const issue = paper.issues[index];
+    if (index >= 0 && issue) {
+      setSelected(index);
+      setPassage(issueQuote(paper, issue, index));
+      return;
+    }
+    setSelected(-1);
+    setPassage(null);
+  }, [part, paper.job_id, paper.status, paper.issues.length]);
 
   function selectIssue(index: number) {
     const issue = paper.issues[index];
@@ -156,6 +171,7 @@ export function Workflow({
           {paper.arxiv_id}
           {paper.author_name ? ` · ${paper.author_name}` : ""} · {paper.status}
         </p>
+        {part ? <p className="mt-3 max-w-xl text-sm leading-6 text-[#1c1915]">{partNote(paper, part)}</p> : null}
       </header>
       <div className="mt-4 flex min-h-0 flex-1 flex-col lg:flex-row">
         {asking ? (
@@ -185,7 +201,7 @@ export function Workflow({
             <PdfView jobId={paper.job_id} page={passage?.page ?? null} quote={passage?.text ?? ""} />
           </div>
         </div>
-        <Specialists paper={paper} selected={selected} onSelect={selectIssue} />
+        <Specialists paper={paper} selected={selected} onSelect={selectIssue} focus={part === "result" ? "" : part} />
         <aside
           aria-hidden={!notebook}
           className={`desk-notebook shrink-0 overflow-hidden border-[#e4dcd0] ${notebook ? "h-80 w-full border-t lg:h-auto lg:w-80 lg:border-t-0 lg:border-l" : "h-0 w-0 border-0"}`}
@@ -251,6 +267,23 @@ export function Workflow({
       {paper.paper_text.trim() ? <Shelf neighbors={paper.neighbors ?? []} /> : null}
     </div>
   );
+}
+
+function partNote(paper: Paper, part: string): string {
+  if (part === "result") {
+    if (paper.status === "passed") {
+      return "No fabricated citation, missing number, unsupported claim, or failed rerun.";
+    }
+    if (paper.status === "contradicted") {
+      const count = paper.issues.length;
+      return count === 1 ? "Failed. 1 problem." : `Failed. ${count} problems.`;
+    }
+    if (paper.status === "error") {
+      return [...paper.events].reverse().find((event) => event.state === "failed")?.detail || "This paper could not be read.";
+    }
+    return "Not judged yet.";
+  }
+  return finishedDetail(paper, part) || "This stage has not run yet.";
 }
 
 function Shelf({ neighbors }: { neighbors: ShelfNeighbor[] }) {

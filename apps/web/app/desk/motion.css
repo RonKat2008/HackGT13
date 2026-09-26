@@ -56,6 +56,52 @@
   transition: width 320ms cubic-bezier(0.2, 0.8, 0.2, 1), height 320ms cubic-bezier(0.2, 0.8, 0.2, 1);
 }
 
+@keyframes desk-rule {
+  from {
+    transform: scaleX(0);
+  }
+  to {
+    transform: scaleX(1);
+  }
+}
+
+.desk-rule {
+  display: block;
+  height: 1px;
+  width: 2.5rem;
+  background: #c4a15a;
+  transform-origin: left center;
+  animation: desk-rule 420ms cubic-bezier(0.2, 0.8, 0.2, 1) both;
+}
+
+.desk-switch {
+  transition: transform 320ms cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+.desk-tabline {
+  transform-origin: left center;
+  transition: transform 320ms cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+@keyframes desk-sheen {
+  from {
+    transform: translateX(-130%);
+  }
+  to {
+    transform: translateX(280%);
+  }
+}
+
+.desk-sheen {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: 28%;
+  background: linear-gradient(90deg, transparent, rgba(255, 248, 230, 0.7), transparent);
+  animation: desk-sheen 1.6s ease-in-out infinite;
+}
+
 .pdf-page {
   position: relative;
   margin: 0 auto 16px;
@@ -97,7 +143,11 @@
   .desk-pulse,
   .desk-wait i,
   .desk-notebook,
-  .desk-panel {
+  .desk-panel,
+  .desk-rule,
+  .desk-switch,
+  .desk-tabline,
+  .desk-sheen {
     animation: none !important;
     transition: none !important;
   }

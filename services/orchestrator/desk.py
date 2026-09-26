@@ -599,7 +599,7 @@ def _paper_dict(conn: Any, job: Any) -> dict[str, Any]:
         "sections": {key: sections.get(key, "") for key in paper_audit.SECTION_KEYS}
         if text
         else {},
-        "issues": _issues_for_jobs(conn, [job["job_id"]]),
+        "issues": paper_audit.unique_issues(_issues_for_jobs(conn, [job["job_id"]])),
         "events": _events_for_jobs(conn, [job["job_id"]]),
         "kaggle": kaggle,
     }
@@ -820,6 +820,7 @@ They can name a paper by its title or with @ and an arXiv id. Use only the paper
 Talk about fabricated citations, missing numbers, unsupported claims, and failed reruns.
 AI-assisted writing is not a problem. Do not say a paper is fraudulent or that it was written by AI.
 If a paper has not been read yet, say so. Quote a short span when you point at a problem.
+Mention each finding once. Do not repeat the same citation, number, or claim.
 Keep the reply to a few sentences the chair can use.
 """
 

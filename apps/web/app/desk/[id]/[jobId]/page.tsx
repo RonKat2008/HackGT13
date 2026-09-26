@@ -6,11 +6,14 @@ import { Workflow } from "./workflow";
 
 export default async function PaperPage({
   params,
+  searchParams,
 }: {
   params: Promise<{ id: string; jobId: string }>;
+  searchParams: Promise<{ part?: string }>;
 }) {
   const user = await requireDeskUser();
   const { id, jobId } = await params;
+  const { part } = await searchParams;
   const [desk, paper] = await Promise.all([
     deskFetch<ConferenceDesk>(`/desk/conferences/${id}`),
     deskFetch<Paper>(`/desk/papers/${jobId}`),
@@ -33,6 +36,7 @@ export default async function PaperPage({
         conferenceName={desk.name}
         papers={desk.papers}
         initial={paper}
+        part={part ?? ""}
       />
     </DeskShell>
   );

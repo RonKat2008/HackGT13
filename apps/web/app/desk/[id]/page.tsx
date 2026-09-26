@@ -1,6 +1,6 @@
 import { deskFetch, type ConferenceDesk } from "@/lib/desk";
 import { requireDeskUser } from "@/lib/session";
-import { AskDesk } from "./ask";
+import { DeskViews } from "../progress";
 import { PaperRail } from "../rail";
 import { DeskShell } from "../shell";
 
@@ -25,7 +25,7 @@ export default async function ConferencePage({
         />
       }
     >
-      <AskDesk conferenceId={id} conferenceName={desk.name} papers={desk.papers} />
+      <DeskViews conferenceId={id} conferenceName={desk.name} initial={desk.papers} />
     </DeskShell>
   );
 }
