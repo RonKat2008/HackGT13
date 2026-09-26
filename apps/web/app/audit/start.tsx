@@ -2,12 +2,27 @@
 
 import { FormEvent, useState } from "react";
 
+const SPECIALISTS = [
+  "ingest",
+  "sections",
+  "retrieve",
+  "extract",
+  "resolve",
+  "numbers",
+  "support",
+  "provenance",
+  "kaggle_runner",
+  "jev",
+] as const;
+
 type Job = {
   job_id: string;
   arxiv_id: string;
   status: string;
   specialist: string;
   issue_count: number;
+  title: string;
+  authors: string;
 };
 
 type Issue = {
@@ -16,12 +31,28 @@ type Issue = {
   evidence_span: string;
   jev_label: string;
   reason: string;
+  arxiv_id: string;
+  confidence: number;
 };
 
 type Neighbor = {
   title: string;
   label: string;
+  text: string;
   cosine: number;
+};
+
+type Probe = {
+  auc: number;
+  hidden: boolean;
+};
+
+type TestLog = {
+  where: string;
+  status: string;
+  log: string;
+  kernel_url: string | null;
+  reason: string;
 };
 
 type Submission = {
@@ -37,9 +68,9 @@ type SavedBatch = {
 };
 
 type Selection =
-  | { source: "fixture" }
-  | { source: "links" }
-  | { source: "batch"; index: number };
+  | { source: "fixture"; arxiv_id: string }
+  | { source: "links"; arxiv_id: string }
+  | { source: "batch"; index: number; arxiv_id: string };
 
 function parseArxivId(line: string): string | null {
   const trimmed = line.trim();
@@ -61,17 +92,39 @@ function parseArxivIds(text: string): string[] {
   return ids;
 }
 
+function defaultIssueArxivId(jobs: Job[], issues: Issue[]): string {
+  const fromIssue = issues.find((issue) => issue.arxiv_id)?.arxiv_id;
+  if (fromIssue) return fromIssue;
+  const withIssue = jobs.find((job) => job.issue_count > 0);
+  return withIssue?.arxiv_id ?? jobs[0]?.arxiv_id ?? "";
+}
+
+function lastLogLines(log: string, maxLines: number): string {
+  const lines = log.replace(/\r\n/g, "\n").split("\n");
+  while (lines.length > 0 && lines[lines.length - 1] === "") {
+    lines.pop();
+  }
+  return lines.slice(-maxLines).join("\n");
+}
+
 export function AuditStart({
   jobs,
-  issue,
+  issues,
   neighbors,
-  runningSpecialist,
+  probe,
+  testLog,
+  datasetUrl,
+  kernelUrl,
 }: {
   jobs: Job[];
-  issue: Issue | undefined;
+  issues: Issue[];
   neighbors: Neighbor[];
-  runningSpecialist: string;
+  probe: Probe;
+  testLog: TestLog;
+  datasetUrl: string | null;
+  kernelUrl: string | null;
 }) {
+  const defaultId = defaultIssueArxivId(jobs, issues);
   const [mode, setMode] = useState<"links" | "batch">("links");
   const [pasteText, setPasteText] = useState("");
   const [batchName, setBatchName] = useState("");
@@ -81,7 +134,10 @@ export function AuditStart({
     null,
   );
   const [batches, setBatches] = useState<SavedBatch[]>([]);
-  const [selection, setSelection] = useState<Selection>({ source: "fixture" });
+  const [selection, setSelection] = useState<Selection>({
+    source: "fixture",
+    arxiv_id: defaultId,
+  });
 
   function handleSubmit(event: FormEvent) {
     event.preventDefault();
@@ -111,7 +167,11 @@ export function AuditStart({
       };
       setSubmission(next);
       setBatches((prev) => [...prev, { name, arxiv_ids }]);
-      setSelection({ source: "batch", index: batches.length });
+      setSelection({
+        source: "batch",
+        index: batches.length,
+        arxiv_id: arxiv_ids[0],
+      });
       return;
     }
 
@@ -123,7 +183,7 @@ export function AuditStart({
     };
     setSubmission(next);
     setCurrentReviewIds(arxiv_ids);
-    setSelection({ source: "links" });
+    setSelection({ source: "links", arxiv_id: arxiv_ids[0] });
   }
 
   let leftHeading = "Papers";
@@ -142,6 +202,16 @@ export function AuditStart({
       showFixtureJobs = false;
     }
   }
+
+  const selectedId = selection.arxiv_id;
+  const matchedJob = jobs.find((job) => job.arxiv_id === selectedId);
+  const paperTitle = matchedJob?.title ?? selectedId;
+  const paperAuthors = matchedJob?.authors ?? null;
+  const paperIssue =
+    issues.find((issue) => issue.arxiv_id === selectedId) ?? null;
+  const runningSpecialist =
+    matchedJob?.status === "running" ? matchedJob.specialist : null;
+  const logPreview = lastLogLines(testLog.log, 40);
 
   return (
     <>
@@ -237,7 +307,13 @@ export function AuditStart({
               <li key={`${batch.name}-${index}`}>
                 <button
                   type="button"
-                  onClick={() => setSelection({ source: "batch", index })}
+                  onClick={() =>
+                    setSelection({
+                      source: "batch",
+                      index,
+                      arxiv_id: batch.arxiv_ids[0],
+                    })
+                  }
                   className={`w-full border px-3 py-2 text-left text-sm ${
                     selection.source === "batch" && selection.index === index
                       ? "border-zinc-900 text-zinc-900"
@@ -252,7 +328,12 @@ export function AuditStart({
           {currentReviewIds ? (
             <button
               type="button"
-              onClick={() => setSelection({ source: "links" })}
+              onClick={() =>
+                setSelection({
+                  source: "links",
+                  arxiv_id: currentReviewIds[0],
+                })
+              }
               className={`mt-2 w-full border px-3 py-2 text-left text-sm ${
                 selection.source === "links"
                   ? "border-zinc-900 text-zinc-900"
@@ -276,57 +357,126 @@ export function AuditStart({
           </h2>
           {showFixtureJobs ? (
             <ul className="flex flex-col gap-3">
-              {jobs.map((job) => (
-                <li
-                  key={job.job_id}
-                  className="border border-zinc-200 px-3 py-3 text-sm text-zinc-900"
-                >
-                  <p className="font-medium">{job.arxiv_id}</p>
-                  <p className="mt-1 text-zinc-600">Status: {job.status}</p>
-                  <p className="text-zinc-600">Specialist: {job.specialist}</p>
-                  <p className="text-zinc-600">Issues: {job.issue_count}</p>
-                </li>
-              ))}
+              {jobs.map((job) => {
+                const selected =
+                  selection.source === "fixture" &&
+                  selection.arxiv_id === job.arxiv_id;
+                return (
+                  <li key={job.job_id}>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setSelection({
+                          source: "fixture",
+                          arxiv_id: job.arxiv_id,
+                        })
+                      }
+                      className={`w-full border px-3 py-3 text-left text-sm text-zinc-900 ${
+                        selected
+                          ? "border-zinc-900 bg-zinc-100"
+                          : "border-zinc-200"
+                      }`}
+                    >
+                      <p className="font-medium">{job.arxiv_id}</p>
+                      <p className="mt-1 text-zinc-600">Status: {job.status}</p>
+                      <p className="text-zinc-600">
+                        Specialist: {job.specialist}
+                      </p>
+                      <p className="text-zinc-600">
+                        Issues: {job.issue_count}
+                      </p>
+                    </button>
+                  </li>
+                );
+              })}
             </ul>
           ) : (
             <ul className="flex flex-col gap-3">
-              {(leftIds ?? []).map((id) => (
-                <li
-                  key={id}
-                  className="border border-zinc-200 px-3 py-3 text-sm text-zinc-900"
-                >
-                  <p className="font-medium">{id}</p>
-                </li>
-              ))}
+              {(leftIds ?? []).map((id) => {
+                const selected = selection.arxiv_id === id;
+                return (
+                  <li key={id}>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (selection.source === "batch") {
+                          setSelection({
+                            source: "batch",
+                            index: selection.index,
+                            arxiv_id: id,
+                          });
+                        } else {
+                          setSelection({ source: "links", arxiv_id: id });
+                        }
+                      }}
+                      className={`w-full border px-3 py-3 text-left text-sm text-zinc-900 ${
+                        selected
+                          ? "border-zinc-900 bg-zinc-100"
+                          : "border-zinc-200"
+                      }`}
+                    >
+                      <p className="font-medium">{id}</p>
+                    </button>
+                  </li>
+                );
+              })}
             </ul>
           )}
         </section>
 
         <section className="flex flex-col gap-4">
           <h2 className="text-sm font-medium uppercase tracking-wide text-zinc-500">
+            Paper
+          </h2>
+          <div className="border border-zinc-200 px-3 py-3 text-sm text-zinc-900">
+            <p className="font-medium">{paperTitle}</p>
+            {paperAuthors ? (
+              <p className="mt-1 text-zinc-600">{paperAuthors}</p>
+            ) : null}
+            <p className="mt-2">
+              <a
+                href={`https://arxiv.org/abs/${selectedId}`}
+                className="text-zinc-900 underline"
+                target="_blank"
+                rel="noreferrer"
+              >
+                https://arxiv.org/abs/{selectedId}
+              </a>
+            </p>
+          </div>
+
+          <h2 className="text-sm font-medium uppercase tracking-wide text-zinc-500">
             Issue
           </h2>
-          {issue ? (
+          {paperIssue ? (
             <div className="border border-zinc-200 px-3 py-3 text-sm text-zinc-900">
-              <p className="font-medium">Type: {issue.issue_type}</p>
+              <p className="font-medium">Type: {paperIssue.issue_type}</p>
               <p className="mt-2">
                 <span className="text-zinc-500">Claim: </span>
-                {issue.claim_text}
+                {paperIssue.claim_text}
               </p>
               <p className="mt-2">
                 <span className="text-zinc-500">Evidence: </span>
-                {issue.evidence_span}
+                {paperIssue.evidence_span}
               </p>
               <p className="mt-2">
                 <span className="text-zinc-500">Jev label: </span>
-                {issue.jev_label}
+                {paperIssue.jev_label}
+              </p>
+              <p className="mt-2">
+                <span className="text-zinc-500">Confidence: </span>
+                {paperIssue.confidence.toFixed(2)}
               </p>
               <p className="mt-2">
                 <span className="text-zinc-500">Reason: </span>
-                {issue.reason}
+                {paperIssue.reason}
               </p>
             </div>
-          ) : null}
+          ) : (
+            <p className="text-sm text-zinc-600">
+              No issue for this paper in the fixture.
+            </p>
+          )}
 
           <p className="text-sm text-zinc-700">
             Nearest reference abstracts. This is not a verdict.
@@ -339,20 +489,91 @@ export function AuditStart({
               >
                 <p className="font-medium">{neighbor.title}</p>
                 <p className="mt-1 text-zinc-600">
-                  Label: {neighbor.label} · Cosine: {neighbor.cosine.toFixed(2)}
+                  Label: {neighbor.label} · Cosine:{" "}
+                  {neighbor.cosine.toFixed(2)}
                 </p>
+                <p className="mt-2 text-zinc-700">{neighbor.text}</p>
               </li>
             ))}
           </ul>
+
+          {probe.hidden ? (
+            <p className="text-sm text-zinc-700">
+              Probe below 0.60 AUC on the holdout. AI-likeness hidden.
+            </p>
+          ) : null}
         </section>
 
         <section className="flex flex-col gap-4">
           <h2 className="text-sm font-medium uppercase tracking-wide text-zinc-500">
-            Running
+            Trace
           </h2>
-          <p className="border border-zinc-200 px-3 py-3 text-sm text-zinc-900">
-            {runningSpecialist}
-          </p>
+          <ol className="flex flex-col gap-2">
+            {SPECIALISTS.map((name) => {
+              const isRunning = runningSpecialist === name;
+              return (
+                <li
+                  key={name}
+                  className={`border px-3 py-2 text-sm ${
+                    isRunning
+                      ? "border-zinc-900 bg-zinc-100 text-zinc-900"
+                      : "border-zinc-200 text-zinc-700"
+                  }`}
+                >
+                  <span className="font-medium">{name}</span>
+                  {isRunning ? (
+                    <span className="ml-2 text-zinc-600">running</span>
+                  ) : null}
+                </li>
+              );
+            })}
+          </ol>
+
+          <h2 className="text-sm font-medium uppercase tracking-wide text-zinc-500">
+            Test log
+          </h2>
+          <div className="border border-zinc-200 px-3 py-3 text-sm text-zinc-900">
+            <p className="text-zinc-600">where: {testLog.where}</p>
+            <pre className="mt-2 overflow-x-auto whitespace-pre-wrap font-mono text-xs text-zinc-800">
+              {logPreview}
+            </pre>
+            {datasetUrl ? (
+              <p className="mt-2">
+                <a
+                  href={datasetUrl}
+                  className="underline"
+                  target="_blank"
+                  rel="noreferrer"
+                >
+                  Dataset
+                </a>
+              </p>
+            ) : null}
+            {kernelUrl ? (
+              <p className="mt-1">
+                <a
+                  href={kernelUrl}
+                  className="underline"
+                  target="_blank"
+                  rel="noreferrer"
+                >
+                  Kernel
+                </a>
+              </p>
+            ) : null}
+            {testLog.kernel_url ? (
+              <p className="mt-1">
+                <a
+                  href={testLog.kernel_url}
+                  className="underline"
+                  target="_blank"
+                  rel="noreferrer"
+                >
+                  Kernel
+                </a>
+              </p>
+            ) : null}
+          </div>
         </section>
       </div>
     </>

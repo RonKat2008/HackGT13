@@ -18,7 +18,9 @@
       "issue_count": 1,
       "author_name": "Ada Chen",
       "author_email": "ada.chen@example.edu",
-      "contacted_at": null
+      "contacted_at": null,
+      "title": "Retrieval-Augmented Generation for Knowledge-Intensive NLP Tasks",
+      "authors": "Ada Chen, Mei Park"
     },
     {
       "job_id": "job_002",
@@ -31,7 +33,9 @@
       "issue_count": 0,
       "author_name": "Ben Okonkwo",
       "author_email": null,
-      "contacted_at": null
+      "contacted_at": null,
+      "title": "Mistral 7B: Open-Weight Models for Efficient Inference",
+      "authors": "Ben Okonkwo, Sara Nguyen"
     }
   ],
   "issues": [
@@ -40,7 +44,9 @@
       "claim_text": "Prior work by Smith et al. (2021) reported a 94% F1 on the same retrieval benchmark.",
       "evidence_span": "We build on retrieval methods that have shown strong results on public benchmarks.",
       "jev_label": "not_mentioned",
-      "reason": "The cited Smith et al. (2021) result does not appear in the linked reference text."
+      "reason": "The cited Smith et al. (2021) result does not appear in the linked reference text.",
+      "arxiv_id": "2301.07041",
+      "confidence": 0.91
     }
   ],
   "neighbors": [
@@ -66,5 +72,12 @@
   "probe": {
     "auc": 0.54,
     "hidden": true
+  },
+  "test_log": {
+    "where": "not_run",
+    "status": "not_run",
+    "log": "claim_id=claim_fixture_001\nNo dataset slug found on claim.\nSkipping kaggle_runner and local pytest.\n",
+    "kernel_url": null,
+    "reason": "A claim had no dataset slug, so the claim test was not run."
   }
 }

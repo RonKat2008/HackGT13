@@ -116,3 +116,70 @@ export async function getPlaybook(product: Product): Promise<Patch[]> {
     `/playbook?product=${encodeURIComponent(product)}`,
   );
 }
+
+export type BatchKind = "links" | "batch";
+
+export type CreateBatchInput = {
+  product: "arxaudit";
+  kind: BatchKind;
+  name: string | null;
+  arxiv_ids: string[];
+};
+
+export type Batch = {
+  batch_id: string;
+  kind: BatchKind;
+  name: string | null;
+  arxiv_ids: string[];
+  created_at: string;
+};
+
+export type PaperJob = {
+  job_id: string;
+  batch_id: string;
+  arxiv_id: string;
+  run_id: string | null;
+  status: string;
+  specialist: string | null;
+  fitness: number | null;
+  issue_count: number;
+  author_name: string | null;
+  author_email: string | null;
+  contacted_at: string | null;
+};
+
+export type JobEvent = {
+  event_id: string;
+  job_id: string;
+  specialist: string;
+  state: "started" | "finished" | "failed";
+  detail: string;
+  created_at: string;
+};
+
+export type BatchDetail = {
+  batch: Batch;
+  jobs: PaperJob[];
+  events: JobEvent[];
+  claims?: Claim[];
+};
+
+export async function createBatch(
+  input: CreateBatchInput,
+): Promise<BatchDetail> {
+  assertServerOnly();
+  return requestJson<BatchDetail>("/batches", {
+    method: "POST",
+    body: JSON.stringify({
+      product: input.product,
+      kind: input.kind,
+      name: input.name,
+      arxiv_ids: input.arxiv_ids,
+    }),
+  });
+}
+
+export async function getBatch(id: string): Promise<BatchDetail> {
+  assertServerOnly();
+  return requestJson<BatchDetail>(`/batches/${id}`);
+}
