@@ -2,8 +2,9 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from uuid import UUID, uuid4
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import Response
 from pydantic import BaseModel, Field
 
 from batches import (
@@ -13,6 +14,23 @@ from batches import (
     get_batch,
     get_conference,
     patch_paper,
+)
+from desk import (
+    add_submissions,
+    ask_conference,
+    delete_submission,
+    conference_desk,
+    conference_reports_zip,
+    create_user_conference,
+    link_account,
+    list_conferences,
+    login,
+    paper_desk,
+    paper_file,
+    paper_report,
+    run_cell,
+    signup,
+    start_run,
 )
 from fitness import record_result, score
 from loop import run_loop
@@ -53,6 +71,39 @@ class CreateConferenceBody(BaseModel):
 class PatchPaperBody(BaseModel):
     author_email: str | None = None
     contacted_at: str | None = None
+
+
+class SubmissionBody(BaseModel):
+    lines: list[str]
+
+
+class RunBody(BaseModel):
+    cap: int | None = None
+
+
+class CellBody(BaseModel):
+    code: str
+
+
+class AskBody(BaseModel):
+    question: str
+    mentions: list[str] = []
+
+
+class AuthBody(BaseModel):
+    email: str
+    password: str
+
+
+class OwnedConferenceBody(BaseModel):
+    owner: str
+    name: str
+    contact_email: str
+
+
+class LinkAccountBody(BaseModel):
+    user_id: str
+    email: str
 
 
 def _batch_http(exc: BatchError) -> None:
@@ -208,6 +259,140 @@ def read_conference(conference_id: str) -> dict:
 def update_paper(job_id: str, body: PatchPaperBody) -> dict:
     try:
         return patch_paper(job_id, body.model_dump())
+    except BatchError as exc:
+        _batch_http(exc)
+
+
+@app.get("/desk/conferences")
+def desk_conferences(owner: str | None = None) -> list[dict]:
+    return list_conferences(owner)
+
+
+@app.post("/desk/signup")
+def desk_signup(body: AuthBody) -> dict:
+    try:
+        return signup(body.email, body.password)
+    except BatchError as exc:
+        _batch_http(exc)
+
+
+@app.post("/desk/login")
+def desk_login(body: AuthBody) -> dict:
+    try:
+        return login(body.email, body.password)
+    except BatchError as exc:
+        _batch_http(exc)
+
+
+@app.post("/desk/accounts/link")
+def desk_link_account(body: LinkAccountBody) -> dict:
+    try:
+        return link_account(body.user_id, body.email)
+    except BatchError as exc:
+        _batch_http(exc)
+
+
+@app.post("/desk/accounts/conferences")
+def desk_owned_conference(body: OwnedConferenceBody) -> dict:
+    try:
+        return create_user_conference(body.owner, body.name, body.contact_email)
+    except BatchError as exc:
+        _batch_http(exc)
+
+
+@app.post("/desk/conferences/{conference_id}/submissions")
+def desk_submissions(conference_id: str, body: SubmissionBody) -> dict:
+    try:
+        return add_submissions(conference_id, body.lines)
+    except BatchError as exc:
+        _batch_http(exc)
+
+
+@app.delete("/desk/conferences/{conference_id}/papers/{job_id}")
+def desk_delete_paper(conference_id: str, job_id: str) -> dict:
+    try:
+        return delete_submission(conference_id, job_id)
+    except BatchError as exc:
+        _batch_http(exc)
+
+
+@app.post("/desk/conferences/{conference_id}/run")
+def desk_run(conference_id: str, body: RunBody) -> dict:
+    try:
+        return start_run(conference_id, body.cap)
+    except BatchError as exc:
+        _batch_http(exc)
+
+
+@app.get("/desk/conferences/{conference_id}")
+def desk_conference(conference_id: str) -> dict:
+    try:
+        return conference_desk(conference_id)
+    except BatchError as exc:
+        _batch_http(exc)
+
+
+@app.get("/desk/papers/{job_id}")
+def desk_paper(job_id: str) -> dict:
+    try:
+        return paper_desk(job_id)
+    except BatchError as exc:
+        _batch_http(exc)
+
+
+@app.get("/desk/papers/{job_id}/pdf")
+def desk_paper_pdf(job_id: str) -> Response:
+    try:
+        payload, arxiv_id = paper_file(job_id)
+    except BatchError as exc:
+        _batch_http(exc)
+    return Response(
+        content=payload,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'inline; filename="{arxiv_id}.pdf"'},
+    )
+
+
+@app.get("/desk/papers/{job_id}/report")
+def desk_paper_report(job_id: str, download: int = Query(default=0)) -> Response:
+    try:
+        report = paper_report(job_id)
+    except BatchError as exc:
+        _batch_http(exc)
+    disposition = "attachment" if download else "inline"
+    filename = f"{report['arxiv_id']}.md"
+    return Response(
+        content=report["markdown"],
+        media_type="text/markdown; charset=utf-8",
+        headers={"Content-Disposition": f'{disposition}; filename="{filename}"'},
+    )
+
+
+@app.get("/desk/conferences/{conference_id}/reports.zip")
+def desk_reports_zip(conference_id: str) -> Response:
+    try:
+        payload = conference_reports_zip(conference_id)
+    except BatchError as exc:
+        _batch_http(exc)
+    return Response(
+        content=payload,
+        media_type="application/zip",
+        headers={"Content-Disposition": 'attachment; filename="reports.zip"'},
+    )
+
+
+@app.post("/desk/cells")
+def desk_cell(body: CellBody) -> dict:
+    try:
+        return run_cell(body.code)
+    except BatchError as exc:
+        _batch_http(exc)
+
+
+@app.post("/desk/conferences/{conference_id}/ask")
+def desk_ask(conference_id: str, body: AskBody) -> dict:
+    try:
+        return ask_conference(conference_id, body.question, body.mentions)
     except BatchError as exc:
         _batch_http(exc)
 

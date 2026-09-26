@@ -189,6 +189,23 @@ def test_issue_schema_and_jev_labels() -> None:
         assert "fraudulent" not in issue["reason"].lower()
 
 
+def test_resolve_finished_detail_says_a_citation_does_not_resolve() -> None:
+    calls, recorder = _collecting_recorder()
+    result = audit_paper(HALLUCINATED, "job-resolve", recorder=recorder)
+    details = [
+        detail
+        for _job_id, name, state, detail in calls
+        if name == "resolve" and state == "finished"
+    ]
+    assert details
+    assert "does not resolve" in details[0].lower()
+    assert "fraudulent" not in details[0].lower()
+    assert "written by ai" not in details[0].lower()
+    citation = next(issue for issue in result["issues"] if issue["issue_type"] == "citation")
+    assert isinstance(citation["page"], int)
+    assert citation["page"] >= 1
+
+
 def test_failed_citation_stays_in_issue_list() -> None:
     _calls, recorder = _collecting_recorder()
     result = audit_paper(HALLUCINATED, "job-keep", recorder=recorder)

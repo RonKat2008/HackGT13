@@ -11,6 +11,7 @@ from shelf import (
     enabled,
     load_rows,
     load_shelf,
+    nearest_abstracts,
     record_event,
     save_batch,
 )
@@ -182,3 +183,20 @@ def test_default_shelf_path_is_existing_csv() -> None:
     path = default_shelf_path()
     assert path.suffix == ".csv"
     assert path.is_file()
+
+
+def test_nearest_abstract_ranks_the_same_sentence_first() -> None:
+    hits = nearest_abstracts(
+        "A short synthetic sentence about a river stone.",
+        k=3,
+        path=FIXTURE_PATH,
+    )
+    assert len(hits) == 3
+    assert hits[0]["title"] == "River Stone Note"
+    assert hits[0]["label"] == "human"
+    assert "river stone" in hits[0]["excerpt"]
+    assert {item["label"] for item in hits} <= {"human", "generated"}
+
+
+def test_blank_text_has_no_shelf_neighbors() -> None:
+    assert nearest_abstracts("   ", path=FIXTURE_PATH) == []

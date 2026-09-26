@@ -263,6 +263,88 @@ def test_product_other_than_arxaudit_returns_400(tmp_path, monkeypatch):
     assert response.status_code == 400
 
 
+def test_fixture_ids_do_not_download(monkeypatch):
+    def refuse(*_args, **_kwargs):
+        raise AssertionError("fixture ids stay on disk")
+
+    monkeypatch.setattr("batches.urllib.request.urlopen", refuse)
+    from batches import resolve_paper
+
+    path, author = resolve_paper("0000.00001")
+
+    assert author == "Ada Example"
+    assert path.name == "hallucinated.pdf"
+
+
+def test_new_arxiv_id_downloads_pdf_and_author(tmp_path, monkeypatch):
+    monkeypatch.setenv("ARXIV_CACHE", str(tmp_path / "cache"))
+    feed = b"""<?xml version="1.0"?>
+    <feed xmlns="http://www.w3.org/2005/Atom">
+      <entry>
+        <title>Attention Is All You Need</title>
+        <author><name>Ashish Vaswani</name></author>
+      </entry>
+    </feed>"""
+
+    class _Body:
+        def __init__(self, data: bytes) -> None:
+            self.data = data
+
+        def read(self) -> bytes:
+            return self.data
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+    def urlopen(request, timeout=0, context=None):
+        url = request.full_url
+        if "api/query" in url:
+            return _Body(feed)
+        if url.endswith("/pdf/1706.03762"):
+            return _Body(b"%PDF-1.4\n")
+        raise AssertionError(url)
+
+    monkeypatch.setattr("batches.urllib.request.urlopen", urlopen)
+    from batches import resolve_paper
+
+    path, author = resolve_paper("1706.03762")
+
+    assert author == "Ashish Vaswani"
+    assert path.read_bytes().startswith(b"%PDF")
+    assert path.parent == tmp_path / "cache"
+
+
+def test_missing_arxiv_record_raises(tmp_path, monkeypatch):
+    monkeypatch.setenv("ARXIV_CACHE", str(tmp_path / "cache"))
+    feed = b"""<?xml version="1.0"?>
+    <feed xmlns="http://www.w3.org/2005/Atom">
+      <entry><title>Error</title><summary>id not found</summary></entry>
+    </feed>"""
+
+    class _Body:
+        def read(self) -> bytes:
+            return feed
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+    monkeypatch.setattr("batches.urllib.request.urlopen", lambda *_a, **_k: _Body())
+    from batches import PaperLoadError, resolve_paper
+
+    try:
+        resolve_paper("9999.99999")
+    except PaperLoadError as exc:
+        assert "no record" in str(exc)
+    else:
+        raise AssertionError("expected PaperLoadError")
+
+
 def test_unknown_batch_conference_and_paper_are_404(tmp_path, monkeypatch):
     client = _client(tmp_path, monkeypatch)
 

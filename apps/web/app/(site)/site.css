@@ -1,0 +1,35 @@
+@keyframes film-beat {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.film-beat {
+  animation: film-beat 0.7s cubic-bezier(0.2, 0.8, 0.2, 1) both;
+}
+
+.film-d1 {
+  animation-delay: 0.4s;
+}
+.film-d2 {
+  animation-delay: 1.3s;
+}
+.film-d3 {
+  animation-delay: 2.2s;
+}
+.film-d4 {
+  animation-delay: 3.1s;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .film-beat {
+    opacity: 1;
+    animation: none;
+    transform: none;
+  }
+}

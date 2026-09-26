@@ -1,12 +1,20 @@
 from __future__ import annotations
 
 import json
+import os
+import re
+import ssl
+import urllib.error
+import urllib.request
+import xml.etree.ElementTree as ET
 from collections.abc import Iterator
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
+
+import certifi
 
 import jev
 import paper_audit
@@ -17,6 +25,8 @@ LOCAL_PAPERS = {
     "0000.00001": (FIXTURES / "hallucinated.pdf", "Ada Example"),
     "0000.00002": (FIXTURES / "human.pdf", "Lin Example"),
 }
+_NEW_ARXIV_ID = re.compile(r"^\d{4}\.\d{4,5}$")
+_ATOM = "{http://www.w3.org/2005/Atom}"
 _JEV_LABELS = frozenset({"supported", "contradicted", "not_mentioned"})
 _MAX_ARXIV_IDS = 8
 
@@ -114,14 +124,129 @@ def _db() -> Iterator[Any]:
         conn.close()
 
 
-def resolve_paper(arxiv_id: str) -> tuple[Path, str]:
+def _arxiv_cache() -> Path:
+    path = Path(os.environ.get("ARXIV_CACHE", Path(__file__).resolve().parent / ".arxiv-cache"))
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+def _arxiv_fetch(url: str, timeout: float = 45) -> bytes:
+    request = urllib.request.Request(
+        url,
+        headers={"User-Agent": "ArxAudit/0.1 (mailto:chair@arxaudit.local)"},
+    )
+    context = ssl.create_default_context(cafile=certifi.where())
+    try:
+        with urllib.request.urlopen(request, timeout=timeout, context=context) as response:
+            return response.read()
+    except (urllib.error.URLError, TimeoutError) as exc:
+        raise PaperLoadError(f"could not reach arxiv for {url}") from exc
+
+
+def _plain(value: str) -> str:
+    return " ".join(value.split())
+
+
+def _local_listing(arxiv_id: str) -> dict[str, str] | None:
     mapped = LOCAL_PAPERS.get(arxiv_id)
     if mapped is None:
+        return None
+    path, author = mapped
+    title = ""
+    abstract = ""
+    if path.is_file():
+        text = paper_audit.load_paper(path)
+        for line in text.splitlines():
+            cleaned = line.strip()
+            if cleaned:
+                title = cleaned[:180]
+                break
+        abstract = (paper_audit.split_sections(text).get("abstract") or "").strip()
+    return {"title": title, "abstract": abstract, "author": author}
+
+
+def _remote_listings(arxiv_ids: list[str]) -> dict[str, dict[str, str]]:
+    found: dict[str, dict[str, str]] = {}
+    ident = re.compile(r"(\d{4}\.\d{4,5})")
+    for start in range(0, len(arxiv_ids), 20):
+        chunk = arxiv_ids[start : start + 20]
+        url = (
+            "https://export.arxiv.org/api/query?id_list="
+            + ",".join(chunk)
+            + f"&start=0&max_results={len(chunk)}"
+        )
+        try:
+            payload = _arxiv_fetch(url, timeout=12)
+            root = ET.fromstring(payload)
+        except (PaperLoadError, ET.ParseError):
+            continue
+        for entry in root.findall(f"{_ATOM}entry"):
+            match = ident.search(entry.findtext(f"{_ATOM}id") or "")
+            if match is None:
+                continue
+            title = _plain(entry.findtext(f"{_ATOM}title") or "")
+            if not title or title.lower().startswith("error"):
+                continue
+            author = entry.find(f"{_ATOM}author/{_ATOM}name")
+            name = _plain(author.text) if author is not None and author.text else ""
+            found[match.group(1)] = {
+                "title": title,
+                "abstract": _plain(entry.findtext(f"{_ATOM}summary") or ""),
+                "author": name,
+            }
+    return found
+
+
+def arxiv_listings(arxiv_ids: list[str]) -> dict[str, dict[str, str]]:
+    """Title, abstract, and first author. A missed arXiv call leaves that id out."""
+    found: dict[str, dict[str, str]] = {}
+    remote: list[str] = []
+    for arxiv_id in arxiv_ids:
+        local = _local_listing(arxiv_id)
+        if local is not None:
+            found[arxiv_id] = local
+        else:
+            remote.append(arxiv_id)
+    if remote and os.environ.get("ARXIV_LISTINGS", "1") != "0":
+        found.update(_remote_listings(remote))
+    return found
+
+
+def _author_from_feed(arxiv_id: str) -> str:
+    payload = _arxiv_fetch(f"https://export.arxiv.org/api/query?id_list={arxiv_id}")
+    root = ET.fromstring(payload)
+    entry = root.find(f"{_ATOM}entry")
+    if entry is None:
+        raise PaperLoadError(f"arxiv has no record for {arxiv_id}")
+    title = (entry.findtext(f"{_ATOM}title") or "").strip()
+    if title.lower().startswith("error"):
+        raise PaperLoadError(f"arxiv has no record for {arxiv_id}")
+    author = entry.find(f"{_ATOM}author/{_ATOM}name")
+    name = (author.text or "").strip() if author is not None and author.text else ""
+    return name or "Unknown"
+
+
+def _download_arxiv(arxiv_id: str) -> tuple[Path, str]:
+    author_name = _author_from_feed(arxiv_id)
+    dest = _arxiv_cache() / f"{arxiv_id}.pdf"
+    if not dest.is_file() or dest.stat().st_size == 0:
+        payload = _arxiv_fetch(f"https://export.arxiv.org/pdf/{arxiv_id}")
+        if not payload.startswith(b"%PDF"):
+            raise PaperLoadError(f"arxiv did not return a pdf for {arxiv_id}")
+        dest.write_bytes(payload)
+    return dest, author_name
+
+
+def resolve_paper(arxiv_id: str) -> tuple[Path, str]:
+    mapped = LOCAL_PAPERS.get(arxiv_id)
+    if mapped is not None:
+        path, author_name = mapped
+        if not path.is_file():
+            raise PaperLoadError(f"missing fixture for {arxiv_id}")
+        return path, author_name
+    if not _NEW_ARXIV_ID.match(arxiv_id):
         raise PaperLoadError(f"unknown arxiv id: {arxiv_id}")
-    path, author_name = mapped
-    if not path.is_file():
-        raise PaperLoadError(f"missing fixture for {arxiv_id}")
-    return path, author_name
+    return _download_arxiv(arxiv_id)
 
 
 def _job_dict(row: Any) -> dict[str, Any]:
@@ -141,13 +266,16 @@ def _job_dict(row: Any) -> dict[str, Any]:
 
 
 def _issue_dict(row: Any) -> dict[str, Any]:
-    return {
+    issue = {
         "issue_type": row["issue_type"],
         "claim_text": row["claim_text"],
         "evidence_span": row["evidence_span"],
         "jev_label": row["jev_label"],
         "reason": row["reason"],
     }
+    if "page" in row.keys():
+        issue["page"] = row["page"]
+    return issue
 
 
 def _event_dict(row: Any) -> dict[str, Any]:

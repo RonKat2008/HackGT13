@@ -3,6 +3,7 @@ from __future__ import annotations
 import csv
 import hashlib
 import os
+import threading
 from pathlib import Path
 from typing import Any, Callable, Iterable
 
@@ -84,11 +85,85 @@ def embed_texts(
     return [fn(text) for text in texts]
 
 
+def _cosine(left: list[float], right: list[float]) -> float:
+    dot = 0.0
+    left_norm = 0.0
+    right_norm = 0.0
+    for a, b in zip(left, right):
+        dot += a * b
+        left_norm += a * a
+        right_norm += b * b
+    if left_norm == 0.0 or right_norm == 0.0:
+        return 0.0
+    return dot / ((left_norm ** 0.5) * (right_norm ** 0.5))
+
+
+def _excerpt(text: str, limit: int = 160) -> str:
+    flat = " ".join(text.split())
+    if len(flat) <= limit:
+        return flat
+    return flat[: limit - 1].rstrip() + "…"
+
+
+_ROW_CACHE: dict[str, tuple[float, list[dict[str, Any]]]] = {}
+_ROW_LOCK = threading.Lock()
+
+
+def _embedded_rows(
+    path: Path,
+    embedder: Callable[[str], list[float]] | None,
+) -> list[dict[str, Any]]:
+    stamp = path.stat().st_mtime if path.exists() else 0.0
+    key = f"{path.resolve()}:{getattr(embedder, '__name__', 'default')}"
+    with _ROW_LOCK:
+        cached = _ROW_CACHE.get(key)
+        if cached and cached[0] == stamp:
+            return cached[1]
+    rows = cap_rows(load_rows(path))
+    vectors = embed_texts([row["text"] for row in rows], embedder)
+    loaded = [{**row, "embedding": vector} for row, vector in zip(rows, vectors)]
+    with _ROW_LOCK:
+        _ROW_CACHE[key] = (stamp, loaded)
+    return loaded
+
+
+def nearest_abstracts(
+    text: str,
+    k: int = 3,
+    path: str | Path | None = None,
+    embedder: Callable[[str], list[float]] | None = None,
+) -> list[dict[str, Any]]:
+    cleaned = (text or "").strip()
+    if not cleaned or k < 1:
+        return []
+    source = Path(path) if path is not None else default_shelf_path()
+    query = embed_texts([cleaned], embedder)[0]
+    ranked = sorted(
+        _embedded_rows(source, embedder),
+        key=lambda row: _cosine(query, row["embedding"]),
+        reverse=True,
+    )
+    neighbors: list[dict[str, Any]] = []
+    for row in ranked[:k]:
+        neighbors.append(
+            {
+                "title": row["title"],
+                "label": "generated" if row["label"] == "ai" else "human",
+                "excerpt": _excerpt(row["text"]),
+                "cosine": round(_cosine(query, row["embedding"]), 4),
+            }
+        )
+    return neighbors
+
+
 def default_shelf_path() -> Path:
     if KAGGLE_DOWNLOADS.is_dir():
         found = sorted(KAGGLE_DOWNLOADS.glob("*.csv"))
-        if found:
-            return found[0]
+        for path in found:
+            with path.open(encoding="utf-8") as handle:
+                header = handle.readline().lower()
+            if "abstract" in header and "is_ai_generated" in header:
+                return path
     return FIXTURE_PATH
 
 
