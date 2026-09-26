@@ -1,0 +1,14 @@
+{
+  "id": "arxaudit/arxaudit-claim",
+  "title": "ArxAudit claim",
+  "code_file": "claim_kernel.py",
+  "language": "python",
+  "kernel_type": "script",
+  "is_private": "true",
+  "enable_gpu": "false",
+  "enable_internet": "true",
+  "dataset_sources": ["yasserh/titanic-dataset"],
+  "competition_sources": [],
+  "kernel_sources": [],
+  "model_sources": []
+}

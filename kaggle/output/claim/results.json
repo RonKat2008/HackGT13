@@ -1,0 +1,8 @@
+{
+  "claim_id": "claim_titanic_001",
+  "dataset_slug": "yasserh/titanic-dataset",
+  "where": "kaggle",
+  "status": "match",
+  "log": ".                                                                        [100%]\n1 passed in 2.63s",
+  "kernel_url": "https://www.kaggle.com/code/arxaudit/arxaudit-claim"
+}
