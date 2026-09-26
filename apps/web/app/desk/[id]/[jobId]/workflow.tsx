@@ -2,12 +2,13 @@
 
 import { useEffect, useState } from "react";
 import type { Paper, Quote } from "@/lib/desk";
-import { categoryLines, findingCount, paperLabel, summaryLine, summaryOf, verdictTone } from "@/lib/verdict";
+import { categoryLines, findingCount, isFinding, paperLabel, summaryLine, summaryOf, verdictTone } from "@/lib/verdict";
 import { deletePaper } from "../../actions";
 import { AskDesk } from "../ask";
 import { MorphLink } from "../../morph-link";
-import { PdfView } from "../../pdf-view";
-import { finishedDetail, issueIndexForPart, issueQuote, Specialists } from "../../specialists";
+import { evidencePage } from "../../finding";
+import { PdfView, type PdfMark } from "../../pdf-view";
+import { finishedDetail, issueIndexForPart, issueQuote, orderedClaims, Specialists } from "../../specialists";
 
 const STARTER = `rate = 20 + 22
 print("cell result", rate)
@@ -40,8 +41,23 @@ export function Workflow({
   const [asking, setAsking] = useState(false);
   const [selected, setSelected] = useState(-1);
   const [passage, setPassage] = useState<Quote | null>(null);
+  const [claimId, setClaimId] = useState("");
+  const [focusPage, setFocusPage] = useState<number | null>(null);
+  const [focusToken, setFocusToken] = useState(0);
   const remove = deletePaper.bind(null, conferenceId);
-  const unread = !paper.paper_text.trim();
+  const unread = !paper.paper_text.trim() && (paper.claims ?? []).length === 0;
+  const activeClaim =
+    (paper.claims ?? []).find((claim) => claim.claim_id === claimId) ??
+    orderedClaims(paper).find((claim) => isFinding(claim)) ??
+    orderedClaims(paper)[0];
+  const marks: PdfMark[] = activeClaim
+    ? [
+        { page: activeClaim.page, text: activeClaim.text, role: "claim" },
+        ...activeClaim.evidence
+          .filter((item) => item.text.trim())
+          .map((item) => ({ page: item.page, text: item.text, role: item.role })),
+      ]
+    : [];
 
   useEffect(() => {
     const code = paper.kaggle?.code;
@@ -202,10 +218,32 @@ export function Workflow({
             </div>
           ) : null}
           <div className="min-h-0 flex-1">
-            <PdfView jobId={paper.job_id} page={passage?.page ?? null} quote={passage?.text ?? ""} />
+            <PdfView
+              jobId={paper.job_id}
+              page={activeClaim ? null : (passage?.page ?? null)}
+              quote={activeClaim ? "" : (passage?.text ?? "")}
+              marks={activeClaim ? marks : undefined}
+              focusPage={activeClaim ? (focusPage ?? evidencePage(activeClaim)) : (passage?.page ?? null)}
+              focusToken={focusToken}
+            />
           </div>
         </div>
-        <Specialists paper={paper} selected={selected} onSelect={selectIssue} focus={part === "result" ? "" : part} />
+        <Specialists
+          paper={paper}
+          selected={selected}
+          onSelect={selectIssue}
+          focus={part === "result" ? "" : part}
+          selectedClaimId={activeClaim?.claim_id ?? ""}
+          onSelectClaim={(id) => {
+            setClaimId(id);
+            const claim = (paper.claims ?? []).find((item) => item.claim_id === id);
+            setFocusPage(claim ? evidencePage(claim) : null);
+          }}
+          onViewEvidence={(page) => {
+            setFocusPage(page);
+            setFocusToken((token) => token + 1);
+          }}
+        />
         <aside
           aria-hidden={!notebook}
           className={`desk-notebook shrink-0 overflow-hidden border-[#e4dcd0] ${notebook ? "h-80 w-full border-t lg:h-auto lg:w-80 lg:border-t-0 lg:border-l" : "h-0 w-0 border-0"}`}

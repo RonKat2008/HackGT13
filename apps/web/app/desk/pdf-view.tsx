@@ -4,18 +4,31 @@ import { useEffect, useRef, useState } from "react";
 
 type PdfModule = typeof import("pdfjs-dist");
 
+export type PdfMark = {
+  page: number | null;
+  text: string;
+  role: string;
+};
+
 export function PdfView({
   jobId,
-  page,
-  quote,
+  page = null,
+  quote = "",
+  marks,
+  focusPage = null,
+  focusToken = 0,
 }: {
   jobId: string;
-  page: number | null;
-  quote: string;
+  page?: number | null;
+  quote?: string;
+  marks?: PdfMark[];
+  focusPage?: number | null;
+  focusToken?: number;
 }) {
   const hostRef = useRef<HTMLDivElement>(null);
   const [status, setStatus] = useState<"loading" | "ready" | "error">("loading");
   const [miss, setMiss] = useState(false);
+  const markKey = JSON.stringify(marks ?? null);
 
   useEffect(() => {
     const host = hostRef.current;
@@ -72,12 +85,20 @@ export function PdfView({
         }).render();
       }
       if (cancelled) return;
-      const found = markQuote(host!, page, quote);
-      setMiss(quote.trim().length >= 4 && !found);
+      host!.querySelectorAll(".pdf-band").forEach((node) => node.remove());
+      const parsed = JSON.parse(markKey) as PdfMark[] | null;
+      const drawn = (parsed && parsed.length > 0 ? parsed : [{ page, text: quote, role: "claim" }]).filter(
+        (mark) => mark.text.trim().length >= 4,
+      );
+      let found = false;
+      for (const mark of drawn) {
+        if (markQuote(host!, mark.page, mark.text, mark.role)) found = true;
+      }
+      setMiss(drawn.length > 0 && !found);
       const reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-      const targetNumber = found ? page : quote.trim() ? 1 : page;
+      const targetNumber = focusPage || drawn.find((mark) => mark.role === "contradicts")?.page || page || 1;
       const target =
-        host!.querySelector<HTMLElement>(`[data-page="${targetNumber || 1}"]`) ??
+        host!.querySelector<HTMLElement>(`[data-page="${targetNumber}"]`) ??
         host!.querySelector<HTMLElement>(".pdf-page");
       target?.scrollIntoView({ block: "start", behavior: reduce ? "auto" : "smooth" });
       setStatus("ready");
@@ -89,7 +110,17 @@ export function PdfView({
     return () => {
       cancelled = true;
     };
-  }, [jobId, page, quote]);
+  }, [jobId, page, quote, markKey, focusPage]);
+
+  useEffect(() => {
+    if (!focusToken) return;
+    const host = hostRef.current;
+    if (!host) return;
+    const reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    host
+      .querySelector<HTMLElement>(`[data-page="${focusPage || 1}"]`)
+      ?.scrollIntoView({ block: "start", behavior: reduce ? "auto" : "smooth" });
+  }, [focusToken, focusPage]);
 
   return (
     <div className="flex h-full min-h-0 flex-col bg-[#ebe4d6]">
@@ -109,18 +140,25 @@ export function PdfView({
   );
 }
 
-function markQuote(root: HTMLElement, page: number | null, quote: string): boolean {
-  root.querySelectorAll(".pdf-band").forEach((node) => node.remove());
-  const needle = quote.replace(/\s+/g, "").toLowerCase();
-  if (needle.length < 4) return false;
+function markQuote(root: HTMLElement, page: number | null, quote: string, role: string): boolean {
+  const full = quote.replace(/\s+/g, "").toLowerCase();
+  const number = quote.match(/\d+\.\d+/)?.[0] ?? "";
+  const needles = [full.slice(0, 48), number].filter((item) => item.length >= 4);
+  for (const needle of needles) {
+    if (placeBand(root, page, needle, role, needle.length)) return true;
+  }
+  return false;
+}
+
+function placeBand(root: HTMLElement, page: number | null, needle: string, role: string, span: number): boolean {
   const pageEl = root.querySelector<HTMLElement>(`[data-page="${page && page > 0 ? page : 1}"]`);
   if (!pageEl) return false;
   const layer = pageEl.querySelector(".textLayer");
   if (!layer) return false;
   const nodes: { node: Text; offset: number }[] = [];
   let flat = "";
-  layer.querySelectorAll("span").forEach((span) => {
-    const textNode = [...span.childNodes].find((node): node is Text => node.nodeType === Node.TEXT_NODE);
+  layer.querySelectorAll("span").forEach((item) => {
+    const textNode = [...item.childNodes].find((node): node is Text => node.nodeType === Node.TEXT_NODE);
     if (!textNode) return;
     const raw = textNode.textContent ?? "";
     for (let index = 0; index < raw.length; index += 1) {
@@ -129,9 +167,9 @@ function markQuote(root: HTMLElement, page: number | null, quote: string): boole
       flat += (raw[index] ?? "").toLowerCase();
     }
   });
-  const at = flat.indexOf(needle.slice(0, Math.min(needle.length, 48)));
+  const at = flat.indexOf(needle);
   if (at < 0 || !nodes[at]) return false;
-  const last = nodes[Math.min(nodes.length, at + Math.min(needle.length, 80)) - 1];
+  const last = nodes[Math.min(nodes.length, at + Math.min(span, 80)) - 1];
   if (!last) return false;
   const range = document.createRange();
   range.setStart(nodes[at].node, nodes[at].offset);
@@ -141,7 +179,8 @@ function markQuote(root: HTMLElement, page: number | null, quote: string): boole
   for (const rect of range.getClientRects()) {
     if (rect.width < 0.5 || rect.height < 0.5) continue;
     const mark = document.createElement("div");
-    mark.className = "pdf-band";
+    mark.className = role === "contradicts" ? "pdf-band pdf-band-contradicts" : "pdf-band";
+    mark.dataset.role = role;
     mark.style.left = `${rect.left - pageRect.left}px`;
     mark.style.top = `${rect.top - pageRect.top}px`;
     mark.style.width = `${rect.width}px`;

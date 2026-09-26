@@ -37,7 +37,7 @@ todos:
     status: pending
   - id: B6
     content: B6 Finding evidence chain UI with two-band PdfView, catalog and computation views
-    status: pending
+    status: completed
   - id: A7
     content: A7 Tables and derived-number arithmetic (tables.py)
     status: pending

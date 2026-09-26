@@ -1,7 +1,9 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import type { Issue, Paper } from "@/lib/desk";
+import type { Claim, Issue, Paper } from "@/lib/desk";
+import { claimVerdictLabel, isFinding } from "@/lib/verdict";
+import { FindingCard } from "./finding";
 
 export const ORDER = [
   "parse",
@@ -73,16 +75,32 @@ export function issueIndexForPart(paper: Paper, part: string): number {
   return paper.issues.findIndex((issue) => types.includes(issue.issue_type));
 }
 
+export function orderedClaims(paper: Paper): Claim[] {
+  const claims = paper.claims ?? [];
+  const findings = claims.filter((claim) => isFinding(claim));
+  const supported = claims.filter(
+    (claim) => !isFinding(claim) && (claim.verdict === "supported" || claim.verdict === "reproduced"),
+  );
+  const rest = claims.filter((claim) => !findings.includes(claim) && !supported.includes(claim));
+  return [...findings, ...supported, ...rest];
+}
+
 export function Specialists({
   paper,
   selected,
   onSelect,
   focus = "",
+  selectedClaimId = "",
+  onSelectClaim,
+  onViewEvidence,
 }: {
   paper: Paper;
   selected: number;
   onSelect: (index: number) => void;
   focus?: string;
+  selectedClaimId?: string;
+  onSelectClaim?: (claimId: string) => void;
+  onViewEvidence?: (page: number | null) => void;
 }) {
   const [announcement, setAnnouncement] = useState("");
   const finished = paper.events.filter((event) => event.state === "finished").length;
@@ -145,7 +163,15 @@ export function Specialists({
             {failed?.detail || "This paper could not be read."}
           </p>
         ) : null}
-        {paper.issues.length > 0 ? (
+        {(paper.claims ?? []).length > 0 && onSelectClaim ? (
+          <ClaimList
+            paper={paper}
+            selectedClaimId={selectedClaimId}
+            onSelectClaim={onSelectClaim}
+            onViewEvidence={onViewEvidence}
+          />
+        ) : null}
+        {(paper.claims ?? []).length === 0 && paper.issues.length > 0 ? (
           <ul className="flex flex-col gap-2">
             {paper.issues.map((issue, index) => (
               <li key={`${issue.issue_type}-${index}`}>
@@ -165,6 +191,83 @@ export function Specialists({
         ) : null}
       </div>
     </aside>
+  );
+}
+
+function ClaimList({
+  paper,
+  selectedClaimId,
+  onSelectClaim,
+  onViewEvidence,
+}: {
+  paper: Paper;
+  selectedClaimId: string;
+  onSelectClaim: (claimId: string) => void;
+  onViewEvidence?: (page: number | null) => void;
+}) {
+  const claims = orderedClaims(paper);
+  const findings = claims.filter((claim) => isFinding(claim));
+  const supported = claims.filter((claim) => !isFinding(claim));
+  return (
+    <div className="flex flex-col gap-4">
+      <ClaimGroup
+        label="Findings"
+        claims={findings}
+        selectedClaimId={selectedClaimId}
+        onSelectClaim={onSelectClaim}
+        onViewEvidence={onViewEvidence}
+      />
+      <ClaimGroup
+        label="Supported"
+        claims={supported}
+        selectedClaimId={selectedClaimId}
+        onSelectClaim={onSelectClaim}
+        onViewEvidence={onViewEvidence}
+      />
+    </div>
+  );
+}
+
+function ClaimGroup({
+  label,
+  claims,
+  selectedClaimId,
+  onSelectClaim,
+  onViewEvidence,
+}: {
+  label: string;
+  claims: Claim[];
+  selectedClaimId: string;
+  onSelectClaim: (claimId: string) => void;
+  onViewEvidence?: (page: number | null) => void;
+}) {
+  if (claims.length === 0) return null;
+  return (
+    <div>
+      <p className="text-[11px] tracking-[0.12em] text-[#6b645c]">{label}</p>
+      <ul className="mt-2 flex flex-col gap-2">
+        {claims.map((claim) => {
+          const active = claim.claim_id === selectedClaimId;
+          return (
+            <li key={claim.claim_id}>
+              {active ? (
+                <FindingCard claim={claim} onViewEvidence={onViewEvidence} />
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => onSelectClaim(claim.claim_id)}
+                  aria-pressed={active}
+                  className="w-full rounded-2xl bg-transparent px-3 py-3 text-left ring-1 ring-[#e4dcd0]"
+                >
+                  <span className="text-[11px] tracking-[0.12em] text-[#8a6a2f]">{claimVerdictLabel(claim.verdict)}</span>
+                  <span className="mt-1 block text-sm leading-5 text-[#1c1915]">{claim.text}</span>
+                </button>
+              )}
+            </li>
+          );
+        })}
+      </ul>
+    </div>
   );
 }
 

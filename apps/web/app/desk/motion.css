@@ -138,6 +138,10 @@
   pointer-events: none;
 }
 
+.pdf-band-contradicts {
+  background: rgba(140, 58, 47, 0.4);
+}
+
 @media (prefers-reduced-motion: reduce) {
   .desk-rise,
   .desk-pulse,
