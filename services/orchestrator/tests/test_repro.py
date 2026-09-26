@@ -155,4 +155,4 @@ def test_audit_records_a_failed_rerun() -> None:
     result = audit_paper(HUMAN, "job-repro", recorder=recorder, repro=worker)
     kinds = {issue["issue_type"] for issue in result["issues"]}
     assert "test" in kinds
-    assert ("job-repro", "kaggle_runner", "finished") in calls
+    assert ("job-repro", "reproduce", "finished") in calls

@@ -79,6 +79,105 @@ export type KaggleRun = {
   claim_text?: string;
 };
 
+export type ClaimType = "citation" | "numerical" | "numerical_comparison" | "dataset" | "semantic";
+
+export type ClaimVerdict =
+  | "supported"
+  | "contradicted"
+  | "not_mentioned"
+  | "unresolved"
+  | "ambiguous"
+  | "reproduced"
+  | "could_not_reproduce"
+  | "insufficient_evidence"
+  | "not_checked";
+
+export type Depth = "consistency" | "external" | "mathematical" | "computational" | "evidence";
+
+export type Evidence = {
+  page: number | null;
+  section: string;
+  text: string;
+  role: "supports" | "contradicts" | "context";
+  source: "paper" | "catalog" | "dataset" | "computation";
+};
+
+export type CatalogQuery = {
+  catalog: string;
+  status: string;
+  candidate_title: string;
+  doi: string;
+  score: number;
+};
+
+export type Catalog = {
+  queried: CatalogQuery[];
+  reference: string;
+};
+
+export type Computation = {
+  claim_id: string;
+  dataset_slug: string;
+  resolution: "match" | "ambiguous" | "not_found" | string;
+  spec: Record<string, unknown>;
+  actual: number | string | null;
+  expected: number | string | null;
+  status: "reproduced" | "could_not_reproduce" | "could_not_run" | string;
+  steps: string[];
+  log: string;
+  formula: string;
+};
+
+export type Claim = {
+  claim_id: string;
+  job_id: string;
+  text: string;
+  page: number | null;
+  section: string;
+  claim_type: ClaimType | string;
+  verdict: ClaimVerdict | string;
+  confidence: number;
+  depth: Depth | string;
+  rounds: number;
+  reason: string;
+  evidence: Evidence[];
+  steps: string[];
+  catalog: Catalog | null;
+  computation: Computation | null;
+};
+
+export type CategoryCount = { total: number } & Record<string, number>;
+
+export type Summary = {
+  analyzed: number;
+  supported: number;
+  contradicted: number;
+  unresolved: number;
+  not_reproduced: number;
+  insufficient: number;
+  categories: {
+    citations: { resolved: number; total: number };
+    internal: { supported: number; total: number };
+    numerical: { consistent: number; total: number };
+    computational: { reproduced: number; total: number };
+  };
+};
+
+export const EMPTY_SUMMARY: Summary = {
+  analyzed: 0,
+  supported: 0,
+  contradicted: 0,
+  unresolved: 0,
+  not_reproduced: 0,
+  insufficient: 0,
+  categories: {
+    citations: { resolved: 0, total: 0 },
+    internal: { supported: 0, total: 0 },
+    numerical: { consistent: 0, total: 0 },
+    computational: { reproduced: 0, total: 0 },
+  },
+};
+
 export type Paper = {
   job_id: string;
   arxiv_id: string;
@@ -88,9 +187,12 @@ export type Paper = {
   specialist: string | null;
   author_name: string | null;
   issue_count: number;
+  finding_count?: number;
   paper_text: string;
   sections: Record<string, string>;
   issues: Issue[];
+  claims?: Claim[];
+  summary?: Summary;
   events: JobEvent[];
   neighbors?: ShelfNeighbor[];
   kaggle?: KaggleRun | null;

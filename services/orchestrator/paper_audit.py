@@ -7,21 +7,13 @@ from typing import Any, Callable
 
 import fitz
 
+import claims as claim_extract
 import probe
 import shelf
 
-SPECIALISTS = [
-    "ingest",
-    "sections",
-    "retrieve",
-    "extract",
-    "resolve",
-    "numbers",
-    "support",
-    "provenance",
-    "kaggle_runner",
-    "jev",
-]
+from models import STAGES
+
+SPECIALISTS = list(STAGES)
 
 SECTION_KEYS = (
     "abstract",
@@ -130,6 +122,8 @@ def audit_paper(
     text = ""
     sections: dict[str, str] = {key: "" for key in SECTION_KEYS}
     claims: list[dict[str, Any]] = []
+    typed_claims: list[dict[str, Any]] = []
+    claims_error = ""
     hidden = False
     hidden_sentence = ""
     kaggle: dict[str, Any] = {}
@@ -139,29 +133,22 @@ def audit_paper(
         record(job_id, specialist, state, detail)
         events.append({"specialist": specialist, "state": state, "detail": detail})
 
-    def ingest() -> None:
-        nonlocal text, pages
+    def parse() -> None:
+        nonlocal text, pages, sections
         text = load_paper(path)
         pages = _page_count(path)
-
-    def sections_step() -> None:
-        nonlocal sections
         sections = split_sections(text)
 
-    def retrieve() -> None:
-        return
-
-    def extract() -> None:
-        nonlocal claims
+    def claims_step() -> None:
+        nonlocal claims, typed_claims, claims_error
         claims = _extract_claims(sections)
+        try:
+            typed_claims = claim_extract.extract_claims(path, job_id, sections)
+        except Exception as exc:
+            typed_claims = []
+            claims_error = f" Typed claim extract failed: {exc}"
 
-    def resolve() -> None:
-        issues.extend(_citation_issues(claims, sections.get("references", "")))
-
-    def numbers() -> None:
-        issues.extend(_number_issues(sections.get("abstract", ""), sections.get("results", "")))
-
-    def support() -> None:
+    def evidence() -> None:
         issues.extend(
             _support_issues(
                 claims,
@@ -169,17 +156,20 @@ def audit_paper(
                 sections.get("results", ""),
             )
         )
+
+    def citations() -> None:
+        issues.extend(_citation_issues(claims, sections.get("references", "")))
+
+    def numbers() -> None:
+        issues.extend(_number_issues(sections.get("abstract", ""), sections.get("results", "")))
+
+    def tables() -> None:
+        return
+
+    def dataset() -> None:
         issues.extend(dataset_issues(claims, text))
 
-    def provenance() -> None:
-        nonlocal hidden, hidden_sentence
-        if auc is None:
-            return
-        hidden = probe.should_hide(auc)
-        if hidden:
-            hidden_sentence = HIDDEN_SENTENCE
-
-    def kaggle_runner() -> None:
+    def reproduce() -> None:
         nonlocal kaggle
         if results_path is not None:
             kaggle = _kaggle_result(results_path)
@@ -201,7 +191,13 @@ def audit_paper(
                 )
             )
 
-    def jev() -> None:
+    def verify() -> None:
+        return
+
+    def critic() -> None:
+        return
+
+    def stamp() -> None:
         collapsed = unique_issues(issues)
         issues.clear()
         issues.extend(collapsed)
@@ -214,36 +210,41 @@ def audit_paper(
                 issue["reason"] = reason.split("\n")[0].strip()
 
     steps: dict[str, Callable[[], None]] = {
-        "ingest": ingest,
-        "sections": sections_step,
-        "retrieve": retrieve,
-        "extract": extract,
-        "resolve": resolve,
+        "parse": parse,
+        "claims": claims_step,
+        "evidence": evidence,
+        "citations": citations,
         "numbers": numbers,
-        "support": support,
-        "provenance": provenance,
-        "kaggle_runner": kaggle_runner,
-        "jev": jev,
+        "tables": tables,
+        "dataset": dataset,
+        "reproduce": reproduce,
+        "verify": verify,
+        "critic": critic,
+        "stamp": stamp,
     }
+    if auc is not None:
+        hidden = probe.should_hide(auc)
+        if hidden:
+            hidden_sentence = HIDDEN_SENTENCE
     for name in SPECIALISTS:
         emit(name, "started", _STARTED[name])
         steps[name]()
-        emit(
+        finished = _finished_detail(
             name,
-            "finished",
-            _finished_detail(
-                name,
-                pages=pages,
-                sections=sections,
-                claims=claims,
-                issues=issues,
-                kaggle=kaggle,
-            ),
+            pages=pages,
+            sections=sections,
+            claims=typed_claims if name == "claims" else claims,
+            issues=issues,
+            kaggle=kaggle,
         )
+        if name == "claims":
+            finished = finished + claims_error
+        emit(name, "finished", finished)
     _annotate_pages(path, issues)
 
     result: dict[str, Any] = {
         "issues": issues,
+        "claims": typed_claims,
         "events": events,
         "hidden": hidden,
         "kaggle": kaggle,
@@ -255,16 +256,17 @@ def audit_paper(
 
 
 _STARTED = {
-    "ingest": "Opening the PDF.",
-    "sections": "Splitting sections.",
-    "retrieve": "Checking for extra sources.",
-    "extract": "Pulling claims.",
-    "resolve": "Checking citations.",
-    "numbers": "Checking abstract numbers.",
-    "support": "Checking claim support.",
-    "provenance": "Skipping likeness.",
-    "kaggle_runner": "Looking for a public table.",
-    "jev": "Stamping problems.",
+    "parse": "Opening the PDF and splitting sections.",
+    "claims": "Pulling verifiable claims.",
+    "evidence": "Retrieving evidence for each claim.",
+    "citations": "Checking citations.",
+    "numbers": "Checking numbers across sections.",
+    "tables": "Reading tables.",
+    "dataset": "Looking for named datasets.",
+    "reproduce": "Looking for a public table to rerun.",
+    "verify": "Asking Jev to judge each claim.",
+    "critic": "Reviewing uncertain verdicts.",
+    "stamp": "Stamping findings.",
 }
 
 
@@ -277,19 +279,15 @@ def _finished_detail(
     issues: list[dict[str, Any]],
     kaggle: dict[str, Any],
 ) -> str:
-    if name == "ingest":
+    if name == "parse":
         count = pages if pages > 0 else 0
         unit = "page" if count == 1 else "pages"
-        return f"Opened {count} {unit}."
-    if name == "sections":
-        return _section_sentence(sections)
-    if name == "retrieve":
-        return "No extra sources. The check uses this PDF."
-    if name == "extract":
+        return f"Opened {count} {unit}. {_section_sentence(sections)}"
+    if name == "claims":
         count = len(claims)
         unit = "claim" if count == 1 else "claims"
         return f"Pulled {count} {unit}."
-    if name == "resolve":
+    if name == "citations":
         count = len(
             {
                 " ".join(str(issue.get("evidence_span") or "").split()).lower()
@@ -309,17 +307,28 @@ def _finished_detail(
         if count == 1:
             return "1 number in the abstract is missing from the results."
         return f"{count} numbers in the abstract are missing from the results."
-    if name == "support":
-        count = _count(issues, "support") + _count(issues, "dataset")
+    if name == "evidence":
+        count = _count(issues, "support")
         if count == 0:
             return "Claims have support in the methods or results."
         if count == 1:
             return "1 claim has no support in the methods or results."
         return f"{count} claims have no support in the methods or results."
-    if name == "provenance":
-        return "Likeness is not scored on this desk."
-    if name == "kaggle_runner":
+    if name == "tables":
+        return "No table arithmetic checked yet."
+    if name == "dataset":
+        count = _count(issues, "dataset")
+        if count == 0:
+            return "Named datasets appear in the paper."
+        if count == 1:
+            return "1 named dataset does not appear in the paper."
+        return f"{count} named datasets do not appear in the paper."
+    if name == "reproduce":
         return _kaggle_sentence(kaggle)
+    if name == "verify":
+        return "Jev is not wired to this desk yet."
+    if name == "critic":
+        return "No uncertain verdict to review."
     count = len(issues)
     if count == 0:
         return "No problem to stamp."

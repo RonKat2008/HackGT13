@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import type { Paper, Quote } from "@/lib/desk";
-import { verdictLabel, verdictTone } from "@/lib/verdict";
+import { categoryLines, findingCount, paperLabel, summaryLine, summaryOf, verdictTone } from "@/lib/verdict";
 import { deletePaper } from "../../actions";
 import { AskDesk } from "../ask";
 import { MorphLink } from "../../morph-link";
@@ -172,8 +172,9 @@ export function Workflow({
           {paper.arxiv_id}
           {paper.author_name ? ` · ${paper.author_name}` : ""}
           {" · "}
-          <span className={verdictTone(paper.status)}>{verdictLabel(paper.status)}</span>
+          <span className={verdictTone(paper.status)}>{paperLabel(paper)}</span>
         </p>
+        <SummaryHeader paper={paper} />
         {part ? <p className="mt-3 max-w-xl text-sm leading-6 text-[#1c1915]">{partNote(paper, part)}</p> : null}
       </header>
       <div className="mt-4 flex min-h-0 flex-1 flex-col lg:flex-row">
@@ -271,14 +272,36 @@ export function Workflow({
   );
 }
 
+function SummaryHeader({ paper }: { paper: Paper }) {
+  const summary = summaryOf(paper);
+  const line = summaryLine(summary);
+  if (!line) return null;
+  const categories = categoryLines(summary).filter((item) => item.total > 0);
+  return (
+    <div className="mt-3 max-w-3xl">
+      <p className="text-sm leading-6 text-[#1c1915]">{line}</p>
+      {categories.length > 0 ? (
+        <dl className="mt-2 flex flex-wrap gap-x-6 gap-y-1 text-xs text-[#6b645c]">
+          {categories.map((item) => (
+            <div key={item.label} className="flex items-baseline gap-1.5">
+              <dt>{item.label}</dt>
+              <dd className="text-[#1c1915]">{item.value}</dd>
+            </div>
+          ))}
+        </dl>
+      ) : null}
+    </div>
+  );
+}
+
 function partNote(paper: Paper, part: string): string {
   if (part === "result") {
     if (paper.status === "passed") {
-      return "No fabricated citation, missing number, unsupported claim, or failed rerun.";
+      return "Every citation resolved, every number matched, every claim had support, and no rerun failed.";
     }
     if (paper.status === "contradicted") {
-      const count = paper.issues.length;
-      return count === 1 ? "Failed. 1 problem." : `Failed. ${count} problems.`;
+      const count = findingCount(paper);
+      return count === 1 ? "1 finding to review." : `${count} findings to review.`;
     }
     if (paper.status === "error") {
       return [...paper.events].reverse().find((event) => event.state === "failed")?.detail || "This paper could not be read.";

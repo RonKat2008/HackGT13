@@ -93,16 +93,17 @@ def test_audit_records_started_then_finished_for_each_specialist() -> None:
         expected.append(("job-1", name, "started"))
         expected.append(("job-1", name, "finished"))
     assert SPECIALISTS == [
-        "ingest",
-        "sections",
-        "retrieve",
-        "extract",
-        "resolve",
+        "parse",
+        "claims",
+        "evidence",
+        "citations",
         "numbers",
-        "support",
-        "provenance",
-        "kaggle_runner",
-        "jev",
+        "tables",
+        "dataset",
+        "reproduce",
+        "verify",
+        "critic",
+        "stamp",
     ]
     assert [(job_id, name, state) for job_id, name, state, _detail in calls] == expected
     assert [(event["specialist"], event["state"]) for event in result["events"]] == [
@@ -118,8 +119,8 @@ def test_default_recorder_is_shelf_record_event(monkeypatch: pytest.MonkeyPatch)
 
     monkeypatch.setattr("shelf.record_event", fake_record)
     result = audit_paper(HUMAN, "job-shelf")
-    assert calls[0] == ("job-shelf", "ingest", "started")
-    assert ("job-shelf", "jev", "finished") in calls
+    assert calls[0] == ("job-shelf", "parse", "started")
+    assert ("job-shelf", "stamp", "finished") in calls
     assert result["events"]
 
 
@@ -195,7 +196,7 @@ def test_resolve_finished_detail_says_a_citation_does_not_resolve() -> None:
     details = [
         detail
         for _job_id, name, state, detail in calls
-        if name == "resolve" and state == "finished"
+        if name == "citations" and state == "finished"
     ]
     assert details
     assert "does not resolve" in details[0].lower()

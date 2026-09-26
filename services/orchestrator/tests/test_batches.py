@@ -95,7 +95,7 @@ def test_missing_id_errors_and_next_paper_still_runs(tmp_path, monkeypatch):
     assert jobs[1]["status"] == "passed"
     assert jobs[1]["issue_count"] == 0
     assert jobs[1]["fitness"] == 1.0
-    assert jobs[1]["specialist"] == "jev"
+    assert jobs[1]["specialist"] == "stamp"
     assert jobs[1]["author_name"] == "Lin Example"
 
 
@@ -112,7 +112,7 @@ def test_hallucinated_paper_is_contradicted_without_fraudulent_reason(
     assert job["status"] == "contradicted"
     assert job["issue_count"] >= 1
     assert job["fitness"] == 0.0
-    assert job["specialist"] == "jev"
+    assert job["specialist"] == "stamp"
     assert job["author_name"] == "Ada Example"
     assert any(claim["issue_type"] in {"citation", "number"} for claim in claims)
     assert all("fraudulent" not in claim["reason"].lower() for claim in claims)

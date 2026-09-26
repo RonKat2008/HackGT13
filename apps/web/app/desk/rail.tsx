@@ -1,5 +1,6 @@
 import Link from "next/link";
 import type { ConferenceSummary, Paper } from "@/lib/desk";
+import { paperLabel, verdictTone } from "@/lib/verdict";
 import { AccountMenu } from "./account";
 import { AddPapersForm } from "./add-form";
 import { addPapers, deletePaper, runQueue } from "./actions";
@@ -118,7 +119,15 @@ export function PaperRail({
                 />
                 <span className="min-w-0">
                   <span className="block text-sm leading-5">{title}</span>
-                  <span className="text-[11px] text-[#6b645c]">{paper.arxiv_id}</span>
+                  <span className="text-[11px] text-[#6b645c]">
+                    {paper.arxiv_id}
+                    {paper.status === "passed" || paper.status === "contradicted" || paper.status === "error" ? (
+                      <>
+                        {" · "}
+                        <span className={verdictTone(paper.status)}>{paperLabel(paper)}</span>
+                      </>
+                    ) : null}
+                  </span>
                 </span>
               </MorphLink>
               <form action={remove} className="shrink-0 pt-1">

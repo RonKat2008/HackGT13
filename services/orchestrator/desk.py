@@ -9,6 +9,7 @@ import json
 import os
 import re
 import secrets
+import sqlite3
 import subprocess
 import sys
 import threading
@@ -19,6 +20,7 @@ from uuid import uuid4
 import paper_audit
 import repro
 import shelf
+from models import DeskClaim, is_finding
 from batches import (
     LOCAL_PAPERS,
     BatchError,
@@ -65,6 +67,37 @@ def _ensure_desk(conn: Any) -> None:
         conn.execute("ALTER TABLE paper_jobs ADD COLUMN abstract TEXT")
     if "page" not in _columns(conn, "paper_issues"):
         conn.execute("ALTER TABLE paper_issues ADD COLUMN page INTEGER")
+    for column, kind in (
+        ("claim_id", "TEXT"),
+        ("confidence", "REAL"),
+        ("depth", "TEXT"),
+        ("verdict", "TEXT"),
+    ):
+        if column not in _columns(conn, "paper_issues"):
+            conn.execute(f"ALTER TABLE paper_issues ADD COLUMN {column} {kind}")
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS paper_claims (
+            claim_id TEXT NOT NULL,
+            job_id TEXT NOT NULL,
+            position INTEGER NOT NULL,
+            text TEXT NOT NULL,
+            page INTEGER,
+            section TEXT NOT NULL DEFAULT '',
+            claim_type TEXT NOT NULL,
+            verdict TEXT NOT NULL,
+            confidence REAL NOT NULL DEFAULT 0,
+            depth TEXT NOT NULL,
+            rounds INTEGER NOT NULL DEFAULT 0,
+            reason TEXT NOT NULL DEFAULT '',
+            evidence_json TEXT NOT NULL DEFAULT '[]',
+            catalog_json TEXT,
+            computation_json TEXT,
+            steps_json TEXT NOT NULL DEFAULT '[]',
+            PRIMARY KEY (job_id, claim_id)
+        )
+        """
+    )
     conn.execute(
         """
         CREATE TABLE IF NOT EXISTS desk_messages (
@@ -378,6 +411,7 @@ def delete_submission(conference_id: str, job_id: str) -> dict[str, str]:
         if row is None:
             raise BatchError(404, "paper not found")
         conn.execute("DELETE FROM paper_issues WHERE job_id = ?", (job_id,))
+        conn.execute("DELETE FROM paper_claims WHERE job_id = ?", (job_id,))
         conn.execute("DELETE FROM job_events WHERE job_id = ?", (job_id,))
         conn.execute("DELETE FROM paper_jobs WHERE job_id = ?", (job_id,))
         conn.commit()
@@ -467,35 +501,23 @@ def _audit_job(job_id: str) -> None:
         path, job_id, recorder=recorder, repro=repro.reproduce
     )
     issues = list(result.get("issues") or [])
-    status = "contradicted" if issues else "passed"
+    claims = list(result.get("claims") or [])
+    findings = [claim for claim in claims if is_finding(claim)]
+    status = "contradicted" if issues or findings else "passed"
     with _db() as conn:
         for issue in issues:
-            conn.execute(
-                """
-                INSERT INTO paper_issues (
-                    job_id, issue_type, claim_text, evidence_span, jev_label, reason, page
-                ) VALUES (?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    job_id,
-                    issue["issue_type"],
-                    issue["claim_text"],
-                    issue["evidence_span"],
-                    issue["jev_label"],
-                    issue["reason"],
-                    issue.get("page") if isinstance(issue.get("page"), int) else None,
-                ),
-            )
+            _insert_issue(conn, job_id, issue)
+        _persist_claims(conn, job_id, claims)
         conn.execute(
             """
             UPDATE paper_jobs
-            SET status = ?, specialist = 'jev', fitness = ?, issue_count = ?,
+            SET status = ?, specialist = 'stamp', fitness = ?, issue_count = ?,
                 author_name = ?, paper_text = ?, kaggle_json = ?
             WHERE job_id = ?
             """,
             (
                 status,
-                0.0 if issues else 1.0,
+                0.0 if issues or findings else 1.0,
                 len(issues),
                 author_name,
                 text,
@@ -504,6 +526,159 @@ def _audit_job(job_id: str) -> None:
             ),
         )
         conn.commit()
+
+
+def _insert_issue(conn: Any, job_id: str, issue: dict[str, Any]) -> None:
+    page = issue.get("page")
+    conn.execute(
+        """
+        INSERT INTO paper_issues (
+            job_id, issue_type, claim_text, evidence_span, jev_label, reason, page,
+            claim_id, confidence, depth, verdict
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            job_id,
+            issue["issue_type"],
+            issue["claim_text"],
+            issue["evidence_span"],
+            issue["jev_label"],
+            issue["reason"],
+            page if isinstance(page, int) else None,
+            issue.get("claim_id"),
+            issue.get("confidence"),
+            issue.get("depth"),
+            issue.get("verdict"),
+        ),
+    )
+
+
+def _persist_claims(conn: Any, job_id: str, claims: list[dict[str, Any]]) -> None:
+    conn.execute("DELETE FROM paper_claims WHERE job_id = ?", (job_id,))
+    for position, raw in enumerate(claims):
+        claim = DeskClaim.model_validate({**raw, "job_id": job_id})
+        conn.execute(
+            """
+            INSERT INTO paper_claims (
+                claim_id, job_id, position, text, page, section, claim_type, verdict,
+                confidence, depth, rounds, reason, evidence_json, catalog_json,
+                computation_json, steps_json
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                claim.claim_id,
+                job_id,
+                position,
+                claim.text,
+                claim.page,
+                claim.section,
+                str(claim.claim_type),
+                str(claim.verdict),
+                claim.confidence,
+                str(claim.depth),
+                claim.rounds,
+                claim.reason,
+                json.dumps([item.model_dump(mode="json") for item in claim.evidence]),
+                json.dumps(claim.catalog.model_dump(mode="json")) if claim.catalog else None,
+                json.dumps(claim.computation.model_dump(mode="json"))
+                if claim.computation
+                else None,
+                json.dumps(claim.steps),
+            ),
+        )
+
+
+def _claims_for_job(conn: Any, job_id: str) -> list[dict[str, Any]]:
+    try:
+        rows = conn.execute(
+            "SELECT * FROM paper_claims WHERE job_id = ? ORDER BY position ASC",
+            (job_id,),
+        ).fetchall()
+    except sqlite3.OperationalError:
+        return []
+    claims: list[dict[str, Any]] = []
+    for row in rows:
+        claims.append(
+            {
+                "claim_id": row["claim_id"],
+                "job_id": row["job_id"],
+                "text": row["text"],
+                "page": row["page"],
+                "section": row["section"],
+                "claim_type": row["claim_type"],
+                "verdict": row["verdict"],
+                "confidence": row["confidence"],
+                "depth": row["depth"],
+                "rounds": row["rounds"],
+                "reason": row["reason"],
+                "evidence": json.loads(row["evidence_json"] or "[]"),
+                "steps": json.loads(row["steps_json"] or "[]"),
+                "catalog": json.loads(row["catalog_json"]) if row["catalog_json"] else None,
+                "computation": json.loads(row["computation_json"])
+                if row["computation_json"]
+                else None,
+            }
+        )
+    return claims
+
+
+def _empty_summary() -> dict[str, Any]:
+    return {
+        "analyzed": 0,
+        "supported": 0,
+        "contradicted": 0,
+        "unresolved": 0,
+        "not_reproduced": 0,
+        "insufficient": 0,
+        "categories": {
+            "citations": {"resolved": 0, "total": 0},
+            "internal": {"supported": 0, "total": 0},
+            "numerical": {"consistent": 0, "total": 0},
+            "computational": {"reproduced": 0, "total": 0},
+        },
+    }
+
+
+def summarize_claims(claims: list[dict[str, Any]]) -> dict[str, Any]:
+    summary = _empty_summary()
+    categories = summary["categories"]
+    for claim in claims:
+        verdict = str(claim.get("verdict") or "")
+        kind = str(claim.get("claim_type") or "")
+        summary["analyzed"] += 1
+        if verdict in ("supported", "reproduced"):
+            summary["supported"] += 1
+        elif verdict == "contradicted":
+            summary["contradicted"] += 1
+        elif verdict == "unresolved":
+            summary["unresolved"] += 1
+        elif verdict == "could_not_reproduce":
+            summary["not_reproduced"] += 1
+        elif verdict == "insufficient_evidence":
+            summary["insufficient"] += 1
+        if kind == "citation":
+            categories["citations"]["total"] += 1
+            if verdict == "supported":
+                categories["citations"]["resolved"] += 1
+        elif kind == "semantic":
+            categories["internal"]["total"] += 1
+            if verdict == "supported":
+                categories["internal"]["supported"] += 1
+        elif kind in ("numerical", "numerical_comparison"):
+            categories["numerical"]["total"] += 1
+            if verdict == "supported":
+                categories["numerical"]["consistent"] += 1
+        elif kind == "dataset":
+            categories["computational"]["total"] += 1
+            if verdict == "reproduced":
+                categories["computational"]["reproduced"] += 1
+    return summary
+
+
+def finding_count(claims: list[dict[str, Any]], issues: list[dict[str, Any]]) -> int:
+    if claims:
+        return sum(1 for claim in claims if is_finding(claim))
+    return len(issues)
 
 
 def _finish_error(job_id: str, detail: str) -> None:
@@ -573,6 +748,7 @@ def paper_desk(job_id: str) -> dict[str, Any]:
 _FIXTURE_TITLES = {
     "0000.00001": "Hallucinated Metric Paper",
     "0000.00002": "Measured Metric Paper",
+    "0000.00003": "Adaptive Reasoning Systems",
 }
 
 
@@ -601,6 +777,8 @@ def _paper_dict(conn: Any, job: Any) -> dict[str, Any]:
     abstract = (job["abstract"] or "").strip() if "abstract" in keys else ""
     if not abstract and sections:
         abstract = (sections.get("abstract") or "").strip()
+    issues = paper_audit.unique_issues(_issues_for_jobs(conn, [job["job_id"]]))
+    claims = _claims_for_job(conn, job["job_id"])
     return {
         "job_id": job["job_id"],
         "arxiv_id": job["arxiv_id"],
@@ -610,11 +788,14 @@ def _paper_dict(conn: Any, job: Any) -> dict[str, Any]:
         "specialist": job["specialist"],
         "author_name": job["author_name"],
         "issue_count": job["issue_count"],
+        "finding_count": finding_count(claims, issues),
         "paper_text": text,
         "sections": {key: sections.get(key, "") for key in paper_audit.SECTION_KEYS}
         if text
         else {},
-        "issues": paper_audit.unique_issues(_issues_for_jobs(conn, [job["job_id"]])),
+        "issues": issues,
+        "claims": claims,
+        "summary": summarize_claims(claims),
         "events": _events_for_jobs(conn, [job["job_id"]]),
         "kaggle": kaggle,
     }

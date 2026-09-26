@@ -24,6 +24,7 @@ FIXTURES = Path(__file__).resolve().parent / "fixtures"
 LOCAL_PAPERS = {
     "0000.00001": (FIXTURES / "hallucinated.pdf", "Ada Example"),
     "0000.00002": (FIXTURES / "human.pdf", "Lin Example"),
+    "0000.00003": (FIXTURES / "demo_paper.pdf", "Mira Example"),
 }
 _NEW_ARXIV_ID = re.compile(r"^\d{4}\.\d{4,5}$")
 _ATOM = "{http://www.w3.org/2005/Atom}"
@@ -273,8 +274,12 @@ def _issue_dict(row: Any) -> dict[str, Any]:
         "jev_label": row["jev_label"],
         "reason": row["reason"],
     }
-    if "page" in row.keys():
+    keys = row.keys()
+    if "page" in keys:
         issue["page"] = row["page"]
+    for column in ("claim_id", "confidence", "depth", "verdict"):
+        if column in keys and row[column] is not None:
+            issue[column] = row[column]
     return issue
 
 
@@ -480,7 +485,7 @@ def _process_job(conn: Any, batch_id: str, arxiv_id: str, position: int) -> None
         arxiv_id=arxiv_id,
         run_id=run_id,
         status="contradicted" if contradicted else "passed",
-        specialist="jev",
+        specialist="stamp",
         fitness=0.0 if contradicted else 1.0,
         issue_count=len(issues),
         author_name=author_name,

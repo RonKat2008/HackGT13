@@ -3,16 +3,17 @@
 import { FormEvent, useState } from "react";
 
 const SPECIALISTS = [
-  "ingest",
-  "sections",
-  "retrieve",
-  "extract",
-  "resolve",
+  "parse",
+  "claims",
+  "evidence",
+  "citations",
   "numbers",
-  "support",
-  "provenance",
-  "kaggle_runner",
-  "jev",
+  "tables",
+  "dataset",
+  "reproduce",
+  "verify",
+  "critic",
+  "stamp",
 ] as const;
 
 type Job = {

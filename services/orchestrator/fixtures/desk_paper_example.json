@@ -1,0 +1,420 @@
+{
+  "job_id": "example-0000-00003",
+  "arxiv_id": "0000.00003",
+  "title": "Adaptive Reasoning Systems",
+  "abstract": "We present an adaptive reasoning system that achieves 95.2% accuracy on the held-out benchmark, improving over the strongest baseline by 7.8 percentage points.",
+  "status": "contradicted",
+  "specialist": "stamp",
+  "author_name": "Mira Example",
+  "issue_count": 6,
+  "finding_count": 6,
+  "paper_text": "",
+  "sections": {},
+  "issues": [],
+  "kaggle": null,
+  "events": [],
+  "summary": {
+    "analyzed": 12,
+    "supported": 4,
+    "contradicted": 2,
+    "unresolved": 1,
+    "not_reproduced": 1,
+    "insufficient": 1,
+    "categories": {
+      "citations": { "resolved": 1, "total": 2 },
+      "internal": { "supported": 1, "total": 3 },
+      "numerical": { "consistent": 1, "total": 4 },
+      "computational": { "reproduced": 1, "total": 3 }
+    }
+  },
+  "claims": [
+    {
+      "claim_id": "c01vaswani17",
+      "job_id": "example-0000-00003",
+      "text": "Our attention layer follows the design introduced by Vaswani et al. (2017).",
+      "page": 1,
+      "section": "abstract",
+      "claim_type": "citation",
+      "verdict": "supported",
+      "confidence": 0.98,
+      "depth": "external",
+      "rounds": 0,
+      "reason": "The reference resolves to a DOI in Crossref with a matching title, authors, and year.",
+      "evidence": [
+        {
+          "page": 7,
+          "section": "references",
+          "text": "Vaswani, A., Shazeer, N., Parmar, N., et al. (2017). Attention is all you need. Advances in Neural Information Processing Systems 30.",
+          "role": "supports",
+          "source": "paper"
+        },
+        {
+          "page": null,
+          "section": "",
+          "text": "Crossref: Attention is all you need (2017). doi:10.48550/arXiv.1706.03762",
+          "role": "supports",
+          "source": "catalog"
+        }
+      ],
+      "steps": [
+        "Matched the in-text token (Vaswani et al., 2017) to reference 1.",
+        "Queried Crossref by DOI. Exact match.",
+        "Title similarity 1.00, author overlap 1.00, year match."
+      ],
+      "catalog": {
+        "queried": [
+          {
+            "catalog": "crossref",
+            "status": "resolved",
+            "candidate_title": "Attention is all you need",
+            "doi": "10.48550/arXiv.1706.03762",
+            "score": 1.0
+          }
+        ],
+        "reference": "Vaswani, A., Shazeer, N., Parmar, N., et al. (2017). Attention is all you need."
+      },
+      "computation": null
+    },
+    {
+      "claim_id": "c02smith2099",
+      "job_id": "example-0000-00003",
+      "text": "This result extends the calibration bound of Smith (2099).",
+      "page": 1,
+      "section": "abstract",
+      "claim_type": "citation",
+      "verdict": "unresolved",
+      "confidence": 0.91,
+      "depth": "external",
+      "rounds": 1,
+      "reason": "The reference could not be independently resolved in the catalogs searched.",
+      "evidence": [
+        {
+          "page": 7,
+          "section": "references",
+          "text": "Smith, J. (2099). Calibration bounds for adaptive reasoning. Journal of Future Learning, 12(3).",
+          "role": "context",
+          "source": "paper"
+        }
+      ],
+      "steps": [
+        "Matched the in-text token (Smith, 2099) to reference 6.",
+        "Queried Crossref, OpenAlex, and Semantic Scholar by title. No candidate above 0.85.",
+        "Critic round 1 widened the title query. Still no match."
+      ],
+      "catalog": {
+        "queried": [
+          { "catalog": "crossref", "status": "not_found", "candidate_title": "", "doi": "", "score": 0.0 },
+          { "catalog": "openalex", "status": "not_found", "candidate_title": "", "doi": "", "score": 0.0 },
+          { "catalog": "semantic_scholar", "status": "not_found", "candidate_title": "Calibration of neural reasoning models", "doi": "", "score": 0.41 }
+        ],
+        "reference": "Smith, J. (2099). Calibration bounds for adaptive reasoning."
+      },
+      "computation": null
+    },
+    {
+      "claim_id": "c03acc952",
+      "job_id": "example-0000-00003",
+      "text": "The system achieves 95.2% accuracy on the held-out benchmark.",
+      "page": 1,
+      "section": "abstract",
+      "claim_type": "numerical",
+      "verdict": "contradicted",
+      "confidence": 0.93,
+      "depth": "consistency",
+      "rounds": 0,
+      "reason": "The abstract says 95.2%. Table 2 and the results text report 89.2% for the same run.",
+      "evidence": [
+        {
+          "page": 4,
+          "section": "results",
+          "text": "Ours 89.2",
+          "role": "contradicts",
+          "source": "paper"
+        }
+      ],
+      "steps": [
+        "Located 95.2 in the abstract.",
+        "Searched results and tables for 95.2. Not present.",
+        "Nearest accuracy for the proposed method is 89.2 in Table 2."
+      ],
+      "catalog": null,
+      "computation": null
+    },
+    {
+      "claim_id": "c04gain78",
+      "job_id": "example-0000-00003",
+      "text": "Our method improves over Baseline B by 7.8 percentage points.",
+      "page": 4,
+      "section": "results",
+      "claim_type": "numerical_comparison",
+      "verdict": "contradicted",
+      "confidence": 0.97,
+      "depth": "mathematical",
+      "rounds": 0,
+      "reason": "Table 2 reports 89.2 for Ours and 84.7 for Baseline B. The difference is 4.5 points, not 7.8.",
+      "evidence": [
+        { "page": 4, "section": "results", "text": "Baseline B 84.7", "role": "contradicts", "source": "paper" },
+        { "page": 4, "section": "results", "text": "Ours 89.2", "role": "contradicts", "source": "paper" }
+      ],
+      "steps": [
+        "Read Table 2 rows Baseline A, Baseline B, Ours.",
+        "Computed 89.2 - 84.7 = 4.5.",
+        "Compared to the claimed 7.8. Outside tolerance."
+      ],
+      "catalog": null,
+      "computation": {
+        "claim_id": "c04gain78",
+        "dataset_slug": "",
+        "resolution": "not_found",
+        "spec": { "op": "DIFFERENCE", "left": "Ours", "right": "Baseline B", "column": "accuracy" },
+        "actual": 4.5,
+        "expected": 7.8,
+        "status": "could_not_reproduce",
+        "steps": ["89.2 - 84.7 = 4.5"],
+        "log": "",
+        "formula": "Ours - Baseline B"
+      }
+    },
+    {
+      "claim_id": "c05acc610",
+      "job_id": "example-0000-00003",
+      "text": "Baseline A achieves 82.1% accuracy.",
+      "page": 4,
+      "section": "results",
+      "claim_type": "numerical",
+      "verdict": "supported",
+      "confidence": 0.99,
+      "depth": "consistency",
+      "rounds": 0,
+      "reason": "Table 2 reports 82.1 for Baseline A.",
+      "evidence": [
+        { "page": 4, "section": "results", "text": "Baseline A 82.1", "role": "supports", "source": "paper" }
+      ],
+      "steps": ["Located 82.1 in Table 2, row Baseline A."],
+      "catalog": null,
+      "computation": null
+    },
+    {
+      "claim_id": "c06surv342",
+      "job_id": "example-0000-00003",
+      "text": "Of the 891 passengers, 342 survived.",
+      "page": 3,
+      "section": "methods",
+      "claim_type": "dataset",
+      "verdict": "reproduced",
+      "confidence": 1.0,
+      "depth": "computational",
+      "rounds": 0,
+      "reason": "Counting Survived == 1 over the 891 rows of the Titanic table gives 342.",
+      "evidence": [
+        {
+          "page": null,
+          "section": "",
+          "text": "COUNT_EQ(Survived, 1) over yasserh/titanic-dataset = 342",
+          "role": "supports",
+          "source": "computation"
+        }
+      ],
+      "steps": [
+        "Compiled the sentence to COUNT_EQ(Survived, 1).",
+        "Resolved 'Titanic' to yasserh/titanic-dataset (known dataset).",
+        "Downloaded the table and ran the spec with pandas."
+      ],
+      "catalog": null,
+      "computation": {
+        "claim_id": "c06surv342",
+        "dataset_slug": "yasserh/titanic-dataset",
+        "resolution": "match",
+        "spec": { "op": "COUNT_EQ", "column": "Survived", "value": 1 },
+        "actual": 342,
+        "expected": 342,
+        "status": "reproduced",
+        "steps": ["rows = 891", "COUNT_EQ(Survived, 1) = 342"],
+        "log": "",
+        "formula": "COUNT_EQ(Survived, 1)"
+      }
+    },
+    {
+      "claim_id": "c07first317",
+      "job_id": "example-0000-00003",
+      "text": "317 passengers travelled in first class.",
+      "page": 3,
+      "section": "methods",
+      "claim_type": "dataset",
+      "verdict": "could_not_reproduce",
+      "confidence": 1.0,
+      "depth": "computational",
+      "rounds": 0,
+      "reason": "Counting Pclass == 1 over the Titanic table gives 216, not 317.",
+      "evidence": [
+        {
+          "page": null,
+          "section": "",
+          "text": "COUNT_EQ(Pclass, 1) over yasserh/titanic-dataset = 216",
+          "role": "contradicts",
+          "source": "computation"
+        }
+      ],
+      "steps": [
+        "Compiled the sentence to COUNT_EQ(Pclass, 1).",
+        "Resolved 'Titanic' to yasserh/titanic-dataset (known dataset).",
+        "Ran the spec with pandas. 216 is outside the 0.5 count tolerance of 317."
+      ],
+      "catalog": null,
+      "computation": {
+        "claim_id": "c07first317",
+        "dataset_slug": "yasserh/titanic-dataset",
+        "resolution": "match",
+        "spec": { "op": "COUNT_EQ", "column": "Pclass", "value": 1 },
+        "actual": 216,
+        "expected": 317,
+        "status": "could_not_reproduce",
+        "steps": ["rows = 891", "COUNT_EQ(Pclass, 1) = 216"],
+        "log": "",
+        "formula": "COUNT_EQ(Pclass, 1)"
+      }
+    },
+    {
+      "claim_id": "c08converge",
+      "job_id": "example-0000-00003",
+      "text": "Training converges in fewer steps than the baseline because the router is trained jointly.",
+      "page": 6,
+      "section": "discussion",
+      "claim_type": "semantic",
+      "verdict": "supported",
+      "confidence": 0.84,
+      "depth": "evidence",
+      "rounds": 0,
+      "reason": "The methods section describes joint router training and Figure 3 reports convergence at step 12k against 19k.",
+      "evidence": [
+        {
+          "page": 3,
+          "section": "methods",
+          "text": "The router and the reasoning head are optimised jointly with a shared learning rate schedule.",
+          "role": "supports",
+          "source": "paper"
+        },
+        {
+          "page": 5,
+          "section": "results",
+          "text": "Convergence is reached at step 12k for our system and 19k for the baseline.",
+          "role": "supports",
+          "source": "paper"
+        }
+      ],
+      "steps": [
+        "Retrieved the two nearest passages with MiniLM.",
+        "Jev judged the claim against both passages: supported at 0.84."
+      ],
+      "catalog": null,
+      "computation": null
+    },
+    {
+      "claim_id": "c09robust",
+      "job_id": "example-0000-00003",
+      "text": "The system is robust to distribution shift across all evaluated domains.",
+      "page": 6,
+      "section": "discussion",
+      "claim_type": "semantic",
+      "verdict": "not_mentioned",
+      "confidence": 0.79,
+      "depth": "evidence",
+      "rounds": 1,
+      "reason": "No passage in the methods or results reports a distribution-shift evaluation.",
+      "evidence": [
+        {
+          "page": 4,
+          "section": "results",
+          "text": "All experiments use the in-distribution split of the benchmark.",
+          "role": "context",
+          "source": "paper"
+        }
+      ],
+      "steps": [
+        "Retrieved the nearest passages with MiniLM. Best similarity 0.31.",
+        "Jev judged the claim: not_mentioned at 0.79.",
+        "Critic round 1 widened the span window. Verdict unchanged."
+      ],
+      "catalog": null,
+      "computation": null
+    },
+    {
+      "claim_id": "c10latency",
+      "job_id": "example-0000-00003",
+      "text": "Inference latency stays under 40 ms on a single GPU.",
+      "page": 6,
+      "section": "discussion",
+      "claim_type": "semantic",
+      "verdict": "insufficient_evidence",
+      "confidence": 0.52,
+      "depth": "evidence",
+      "rounds": 3,
+      "reason": "Three rounds did not settle the claim. Requires human review.",
+      "evidence": [
+        {
+          "page": 5,
+          "section": "results",
+          "text": "Latency measurements were taken on the development server.",
+          "role": "context",
+          "source": "paper"
+        }
+      ],
+      "steps": [
+        "Round 1: Jev supported at 0.55.",
+        "Round 2: critic widened the span window. Jev not_mentioned at 0.51.",
+        "Round 3: critic added a prompt rule. Jev supported at 0.53. Cap reached."
+      ],
+      "catalog": null,
+      "computation": null
+    },
+    {
+      "claim_id": "c11housing",
+      "job_id": "example-0000-00003",
+      "text": "The housing corpus holds 20,640 districts.",
+      "page": 3,
+      "section": "methods",
+      "claim_type": "dataset",
+      "verdict": "ambiguous",
+      "confidence": 0.0,
+      "depth": "computational",
+      "rounds": 0,
+      "reason": "Several public tables match 'housing'. The desk did not pick one.",
+      "evidence": [],
+      "steps": [
+        "Compiled the sentence to ROWS().",
+        "Searched Kaggle for 'housing'. 3 candidate tables, none named in the paper.",
+        "Left the resolution ambiguous rather than guess."
+      ],
+      "catalog": null,
+      "computation": {
+        "claim_id": "c11housing",
+        "dataset_slug": "",
+        "resolution": "ambiguous",
+        "spec": { "op": "ROWS" },
+        "actual": null,
+        "expected": 20640,
+        "status": "could_not_run",
+        "steps": ["candidates: camnugent/california-housing-prices, harrywang/housing, shibumohapatra/house-price"],
+        "log": "",
+        "formula": "ROWS()"
+      }
+    },
+    {
+      "claim_id": "c12medianlen",
+      "job_id": "example-0000-00003",
+      "text": "The median prompt length in the corpus is 61 tokens.",
+      "page": 3,
+      "section": "methods",
+      "claim_type": "numerical",
+      "verdict": "not_checked",
+      "confidence": 0.0,
+      "depth": "consistency",
+      "rounds": 0,
+      "reason": "The corpus is not public and no other section repeats the number.",
+      "evidence": [],
+      "steps": ["Searched results and tables for 61. Not present.", "No dataset named. Not checked."],
+      "catalog": null,
+      "computation": null
+    }
+  ]
+}

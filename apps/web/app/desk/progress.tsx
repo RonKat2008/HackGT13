@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import type { ConferenceDesk, Paper } from "@/lib/desk";
-import { failureWhere, verdictLabel } from "@/lib/verdict";
+import { categoryLines, failureWhere, findingCount, paperLabel, summaryLine, summaryOf } from "@/lib/verdict";
 import { AskDesk } from "./[id]/ask";
 import { LABELS, ORDER } from "./specialists";
 
@@ -23,9 +23,9 @@ function reach(paper: Paper): number {
 }
 
 function resultOf(paper: Paper): { label: string; tone: string } | null {
-  if (paper.status === "passed") return { label: verdictLabel(paper.status), tone: "text-[#2f6b4f]" };
-  if (paper.status === "contradicted") return { label: verdictLabel(paper.status), tone: "text-[#8c3a2f]" };
-  if (paper.status === "error") return { label: verdictLabel(paper.status), tone: "text-[#8c3a2f]" };
+  if (paper.status === "passed") return { label: paperLabel(paper), tone: "text-[#2f6b4f]" };
+  if (paper.status === "contradicted") return { label: paperLabel(paper), tone: "text-[#8c3a2f]" };
+  if (paper.status === "error") return { label: paperLabel(paper), tone: "text-[#8c3a2f]" };
   return null;
 }
 
@@ -33,8 +33,12 @@ function liveLine(paper: Paper): string {
   const cursor = reach(paper);
   if (paper.status === "running" && cursor >= 0) return `Now · ${LABELS[ORDER[cursor]]}`;
   if (paper.status === "queued") return "Waiting";
-  if (paper.status === "passed") return "Every stage finished.";
-  if (paper.status === "contradicted") return "Stopped on a failed check.";
+  const line = summaryLine(summaryOf(paper));
+  if (paper.status === "passed") return line || "Every claim checked. Nothing to report.";
+  if (paper.status === "contradicted") {
+    const count = findingCount(paper);
+    return line || (count === 1 ? "1 finding to review." : `${count} findings to review.`);
+  }
   if (paper.status === "error") return "The paper could not be read.";
   return "";
 }
@@ -148,9 +152,10 @@ function PaperBar({ conferenceId, paper }: { conferenceId: string; paper: Paper 
   const cursor = reach(paper);
   const running = paper.status === "running";
   const result = resultOf(paper);
-  const where = paper.status === "contradicted" ? failureWhere(paper.issues) : "";
+  const where = paper.status === "contradicted" ? failureWhere(paper.issues, paper.claims ?? []) : "";
   const [hint, setHint] = useState<string | null>(null);
   const stages = [...ORDER, "result"] as const;
+  const categories = categoryLines(summaryOf(paper)).filter((line) => line.total > 0);
 
   return (
     <article className="rounded-2xl bg-white px-5 py-4 ring-1 ring-[#e4dcd0]">
@@ -203,6 +208,16 @@ function PaperBar({ conferenceId, paper }: { conferenceId: string; paper: Paper 
         </div>
       </div>
       <p className="mt-2 text-xs text-[#6b645c]">{hint ?? liveLine(paper)}</p>
+      {categories.length > 0 && !running ? (
+        <dl className="mt-3 grid grid-cols-2 gap-x-6 gap-y-1 text-[11px] text-[#6b645c] sm:grid-cols-4">
+          {categories.map((line) => (
+            <div key={line.label} className="flex flex-col">
+              <dt className="tracking-[0.04em]">{line.label}</dt>
+              <dd className="text-sm text-[#1c1915]">{line.value}</dd>
+            </div>
+          ))}
+        </dl>
+      ) : null}
     </article>
   );
 }

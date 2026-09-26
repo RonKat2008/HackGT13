@@ -4,29 +4,31 @@ import { useEffect, useState } from "react";
 import type { Issue, Paper } from "@/lib/desk";
 
 export const ORDER = [
-  "ingest",
-  "sections",
-  "retrieve",
-  "extract",
-  "resolve",
+  "parse",
+  "claims",
+  "evidence",
+  "citations",
   "numbers",
-  "support",
-  "provenance",
-  "kaggle_runner",
-  "jev",
+  "tables",
+  "dataset",
+  "reproduce",
+  "verify",
+  "critic",
+  "stamp",
 ] as const;
 
 export const LABELS: Record<string, string> = {
-  ingest: "Ingest",
-  sections: "Sections",
-  retrieve: "Retrieve",
-  extract: "Extract",
-  resolve: "Resolve",
+  parse: "Parse",
+  claims: "Claims",
+  evidence: "Evidence",
+  citations: "Citations",
   numbers: "Numbers",
-  support: "Support",
-  provenance: "Provenance",
-  kaggle_runner: "Rerun",
-  jev: "Stamp",
+  tables: "Tables",
+  dataset: "Dataset",
+  reproduce: "Reproduce",
+  verify: "Verify",
+  critic: "Critic",
+  stamp: "Stamp",
 };
 
 export function finishedDetail(paper: Paper, name: string): string {
@@ -55,12 +57,15 @@ function cardState(paper: Paper, name: string): "idle" | "now" | "done" {
 }
 
 const ISSUE_OF: Record<string, string[]> = {
-  resolve: ["citation"],
+  evidence: ["support"],
+  citations: ["citation"],
   numbers: ["number"],
-  support: ["support", "dataset"],
-  kaggle_runner: ["test"],
-  jev: ["citation", "number", "support", "dataset", "test"],
-  result: ["citation", "number", "support", "dataset", "test"],
+  tables: ["table"],
+  dataset: ["dataset"],
+  reproduce: ["test"],
+  verify: ["semantic"],
+  stamp: ["citation", "number", "support", "dataset", "test", "table", "semantic"],
+  result: ["citation", "number", "support", "dataset", "test", "table", "semantic"],
 };
 
 export function issueIndexForPart(paper: Paper, part: string): number {
