@@ -1,5 +1,5 @@
 import Link from "next/link";
-import type { ConferenceSummary, Paper } from "@/lib/desk";
+import { EXAMPLE_JOB_ID, type ConferenceSummary, type Paper } from "@/lib/desk";
 import { paperLabel, verdictTone } from "@/lib/verdict";
 import { AccountMenu } from "./account";
 import { AddPapersForm } from "./add-form";
@@ -111,7 +111,7 @@ export function PaperRail({
           return (
             <li key={paper.job_id} className="flex shrink-0 items-start gap-1 lg:shrink">
               <MorphLink
-                href={`/desk/${conferenceId}/${paper.job_id}`}
+                href={`/desk/${conferenceId}/${paper.job_id}${paper.job_id === EXAMPLE_JOB_ID ? "?example=1" : ""}`}
                 className={`flex min-w-0 flex-1 items-start gap-2 rounded-xl px-2 py-2 ${active ? "bg-white/80" : "hover:bg-white/60"}`}
               >
                 <span

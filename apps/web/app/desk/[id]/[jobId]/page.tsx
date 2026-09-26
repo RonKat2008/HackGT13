@@ -1,4 +1,5 @@
-import { deskFetch, type ConferenceDesk, type Paper } from "@/lib/desk";
+import { deskFetch, EXAMPLE_JOB_ID, type ConferenceDesk, type Paper } from "@/lib/desk";
+import { examplePaper, withExample } from "@/lib/example-paper";
 import { requireDeskUser } from "@/lib/session";
 import { PaperRail } from "../../rail";
 import { DeskShell } from "../../shell";
@@ -9,22 +10,23 @@ export default async function PaperPage({
   searchParams,
 }: {
   params: Promise<{ id: string; jobId: string }>;
-  searchParams: Promise<{ part?: string }>;
+  searchParams: Promise<{ part?: string; example?: string }>;
 }) {
   const user = await requireDeskUser();
   const { id, jobId } = await params;
-  const { part } = await searchParams;
-  const [desk, paper] = await Promise.all([
-    deskFetch<ConferenceDesk>(`/desk/conferences/${id}`),
-    deskFetch<Paper>(`/desk/papers/${jobId}`),
-  ]);
+  const { part, example } = await searchParams;
+  const showExample = example === "1" || jobId === EXAMPLE_JOB_ID;
+  const desk = await deskFetch<ConferenceDesk>(`/desk/conferences/${id}`);
+  const papers = showExample ? withExample(desk.papers) : desk.papers;
+  const paper: Paper =
+    jobId === EXAMPLE_JOB_ID ? examplePaper() : await deskFetch<Paper>(`/desk/papers/${jobId}`);
   return (
     <DeskShell
       rail={
         <PaperRail
           conferenceId={id}
           name={desk.name}
-          papers={desk.papers}
+          papers={papers}
           running={desk.running}
           activeJobId={jobId}
           email={user.email}
@@ -34,7 +36,7 @@ export default async function PaperPage({
       <Workflow
         conferenceId={id}
         conferenceName={desk.name}
-        papers={desk.papers}
+        papers={papers}
         initial={paper}
         part={part ?? ""}
       />

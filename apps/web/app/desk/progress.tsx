@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useState } from "react";
-import type { ConferenceDesk, Paper } from "@/lib/desk";
+import { EXAMPLE_JOB_ID, type ConferenceDesk, type Paper } from "@/lib/desk";
 import { categoryLines, failureWhere, findingCount, paperLabel, summaryLine, summaryOf } from "@/lib/verdict";
 import { AskDesk } from "./[id]/ask";
 import { LABELS, ORDER } from "./specialists";
@@ -43,16 +43,24 @@ function liveLine(paper: Paper): string {
   return "";
 }
 
+function keepExample(next: Paper[], current: Paper[]): Paper[] {
+  const sample = current.find((paper) => paper.job_id === EXAMPLE_JOB_ID);
+  if (!sample || next.some((paper) => paper.job_id === EXAMPLE_JOB_ID)) return next;
+  return [sample, ...next];
+}
+
 export function DeskViews({
   conferenceId,
   conferenceName,
   initial,
+  example = false,
 }: {
   conferenceId: string;
   conferenceName: string;
   initial: Paper[];
+  example?: boolean;
 }) {
-  const [view, setView] = useState<"chat" | "summary">("chat");
+  const [view, setView] = useState<"chat" | "summary">(example ? "summary" : "chat");
   const [papers, setPapers] = useState(initial);
   const moving = papers.some((paper) => paper.status === "queued" || paper.status === "running");
 
@@ -66,10 +74,11 @@ export function DeskViews({
       const response = await fetch(`/api/desk/conferences/${conferenceId}`);
       if (!response.ok) return;
       const body = (await response.json()) as ConferenceDesk;
-      if (Array.isArray(body.papers)) setPapers(body.papers);
+      if (!Array.isArray(body.papers)) return;
+      setPapers((current) => (example ? keepExample(body.papers, current) : body.papers));
     }, 800);
     return () => clearInterval(timer);
-  }, [conferenceId, moving]);
+  }, [conferenceId, moving, example]);
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
@@ -161,7 +170,7 @@ function PaperBar({ conferenceId, paper }: { conferenceId: string; paper: Paper 
     <article className="rounded-2xl bg-white px-5 py-4 ring-1 ring-[#e4dcd0]">
       <div className="flex items-baseline justify-between gap-4">
         <Link
-          href={`/desk/${conferenceId}/${paper.job_id}`}
+          href={`/desk/${conferenceId}/${paper.job_id}${paper.job_id === EXAMPLE_JOB_ID ? "?example=1" : ""}`}
           className="line-clamp-2 font-[family-name:var(--desk-serif)] text-2xl leading-tight"
         >
           {titleOf(paper)}
@@ -195,7 +204,7 @@ function PaperBar({ conferenceId, paper }: { conferenceId: string; paper: Paper 
             return (
               <Link
                 key={name}
-                href={`/desk/${conferenceId}/${paper.job_id}?part=${name}`}
+                href={`/desk/${conferenceId}/${paper.job_id}?part=${name}${paper.job_id === EXAMPLE_JOB_ID ? "&example=1" : ""}`}
                 aria-label={label}
                 onMouseEnter={() => setHint(label)}
                 onMouseLeave={() => setHint(null)}

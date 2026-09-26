@@ -13,7 +13,7 @@ todos:
     status: completed
   - id: B5
     content: B5 Dashboard and paper summary UI against example JSON
-    status: pending
+    status: completed
   - id: A3
     content: A3 Semantic evidence with MiniLM + NumPy, verifier/falsifier (evidence.py)
     status: pending

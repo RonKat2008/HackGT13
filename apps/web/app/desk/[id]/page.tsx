@@ -1,4 +1,5 @@
 import { deskFetch, type ConferenceDesk } from "@/lib/desk";
+import { withExample } from "@/lib/example-paper";
 import { requireDeskUser } from "@/lib/session";
 import { DeskViews } from "../progress";
 import { PaperRail } from "../rail";
@@ -6,12 +7,16 @@ import { DeskShell } from "../shell";
 
 export default async function ConferencePage({
   params,
+  searchParams,
 }: {
   params: Promise<{ id: string }>;
+  searchParams: Promise<{ example?: string }>;
 }) {
   const user = await requireDeskUser();
   const { id } = await params;
+  const example = (await searchParams).example === "1";
   const desk = await deskFetch<ConferenceDesk>(`/desk/conferences/${id}`);
+  const papers = example ? withExample(desk.papers) : desk.papers;
 
   return (
     <DeskShell
@@ -19,13 +24,13 @@ export default async function ConferencePage({
         <PaperRail
           conferenceId={id}
           name={desk.name}
-          papers={desk.papers}
+          papers={papers}
           running={desk.running}
           email={user.email}
         />
       }
     >
-      <DeskViews conferenceId={id} conferenceName={desk.name} initial={desk.papers} />
+      <DeskViews conferenceId={id} conferenceName={desk.name} initial={papers} example={example} />
     </DeskShell>
   );
 }

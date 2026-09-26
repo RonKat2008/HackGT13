@@ -163,6 +163,8 @@ export type Summary = {
   };
 };
 
+export const EXAMPLE_JOB_ID = "example-0000-00003";
+
 export const EMPTY_SUMMARY: Summary = {
   analyzed: 0,
   supported: 0,
