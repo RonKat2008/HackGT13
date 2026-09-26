@@ -1,4 +1,5 @@
 import { getRun } from "@/lib/api";
+import { Claims } from "./claims";
 
 export default async function RunPage({
   params,
@@ -62,6 +63,8 @@ export default async function RunPage({
           </div>
         ) : null}
       </dl>
+
+      <Claims run={run} />
     </main>
   );
 }
