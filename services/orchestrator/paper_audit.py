@@ -8,8 +8,10 @@ from typing import Any, Callable
 import fitz
 
 import claims as claim_extract
+import evidence as evidence_index
 import probe
 import shelf
+import verify as claim_verify
 
 from models import STAGES
 
@@ -149,6 +151,10 @@ def audit_paper(
             claims_error = f" Typed claim extract failed: {exc}"
 
     def evidence() -> None:
+        try:
+            evidence_index.attach(path, sections, typed_claims)
+        except Exception:
+            pass
         issues.extend(
             _support_issues(
                 claims,
@@ -215,7 +221,8 @@ def audit_paper(
             )
 
     def verify() -> None:
-        return
+        claim_verify.judge_claims(typed_claims)
+        _settle_local(typed_claims, sections, kaggle)
 
     def critic() -> None:
         return
@@ -256,7 +263,7 @@ def audit_paper(
             name,
             pages=pages,
             sections=sections,
-            claims=typed_claims if name == "claims" else claims,
+            claims=typed_claims if name in {"claims", "verify"} else claims,
             issues=issues,
             kaggle=kaggle,
         )
@@ -349,7 +356,7 @@ def _finished_detail(
     if name == "reproduce":
         return _kaggle_sentence(kaggle)
     if name == "verify":
-        return "Jev is not wired to this desk yet."
+        return claim_verify.finished_sentence(claims)
     if name == "critic":
         return "No uncertain verdict to review."
     count = len(issues)
@@ -577,6 +584,100 @@ def _number_issues(abstract: str, results: str) -> list[dict[str, Any]]:
                 )
             )
     return issues
+
+
+def _settle_local(
+    claims: list[dict[str, Any]],
+    sections: dict[str, str],
+    kaggle: dict[str, Any],
+) -> None:
+    references = str(sections.get("references") or "")
+    results = str(sections.get("results") or "")
+    pool = _content_words(f"{sections.get('methods', '')} {results}")
+    for claim in claims:
+        if str(claim.get("verdict") or "not_checked") != "not_checked":
+            continue
+        kind = str(claim.get("claim_type") or "")
+        if kind == "citation":
+            _settle_citation(claim, references)
+        elif kind in {"numerical", "numerical_comparison"} and claim.get("section") == "abstract":
+            _settle_abstract_number(claim, results)
+        elif kind == "semantic":
+            _settle_semantic(claim, pool)
+        elif kind == "dataset":
+            _settle_dataset(claim, kaggle)
+
+
+def _settle_citation(claim: dict[str, Any], references: str) -> None:
+    match = CITATION_RE.search(str(claim.get("text") or ""))
+    if match is None:
+        return
+    author, year = match.group(1), match.group(2)
+    token = f"{author}, {year}"
+    refs_lower = references.lower()
+    found = token.lower() in refs_lower or (author.lower() in refs_lower and year in references)
+    steps = list(claim.get("steps") or [])
+    if found:
+        claim["verdict"] = "supported"
+        claim["confidence"] = 1.0
+        steps.append("Matched the citation to the reference list.")
+    else:
+        claim["verdict"] = "unresolved"
+        claim["confidence"] = 1.0
+        claim["reason"] = f"The citation ({token}) does not appear in the references."
+        steps.append("The citation is missing from the reference list.")
+    claim["steps"] = steps
+
+
+def _settle_abstract_number(claim: dict[str, Any], results: str) -> None:
+    numbers = NUMBER_RE.findall(str(claim.get("text") or ""))
+    if not numbers:
+        return
+    missing = [token for token in numbers if token not in results]
+    steps = list(claim.get("steps") or [])
+    steps.append("Compared the abstract number with the results.")
+    claim["steps"] = steps
+    claim["confidence"] = 1.0
+    if missing:
+        claim["verdict"] = "contradicted"
+        claim["reason"] = f"The number {missing[0]} in the abstract is absent from the results."
+    else:
+        claim["verdict"] = "supported"
+
+
+def _settle_semantic(claim: dict[str, Any], pool: set[str]) -> None:
+    words = _content_words(str(claim.get("text") or ""))
+    if not words:
+        return
+    steps = list(claim.get("steps") or [])
+    claim["confidence"] = 1.0
+    if words.isdisjoint(pool):
+        claim["verdict"] = "contradicted"
+        claim["reason"] = "The claim shares no content word of length 4 or more with methods or results."
+        steps.append("Checked the claim against the methods and results.")
+    else:
+        claim["verdict"] = "supported"
+        steps.append("The claim shares wording with the methods or results.")
+    claim["steps"] = steps
+
+
+def _settle_dataset(claim: dict[str, Any], kaggle: dict[str, Any]) -> None:
+    status = str(kaggle.get("status") or "")
+    if status not in {"match", *TEST_FAIL_STATUSES}:
+        return
+    target = str(kaggle.get("claim_text") or "")
+    text = str(claim.get("text") or "")
+    if not target or (target not in text and text not in target):
+        return
+    steps = list(claim.get("steps") or [])
+    steps.append("Compared the claim with the public table.")
+    claim["steps"] = steps
+    claim["confidence"] = 1.0
+    if status == "match":
+        claim["verdict"] = "reproduced"
+    else:
+        claim["verdict"] = "could_not_reproduce"
+        claim["reason"] = str(kaggle.get("detail") or "The stored claim test log disagrees with the paper.")
 
 
 def _content_words(text: str) -> set[str]:

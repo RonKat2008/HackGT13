@@ -100,6 +100,17 @@ def _ensure_desk(conn: Any) -> None:
     )
     conn.execute(
         """
+        CREATE TABLE IF NOT EXISTS jev_cache (
+            cache_key TEXT PRIMARY KEY,
+            label TEXT NOT NULL,
+            confidence REAL NOT NULL,
+            probs_json TEXT NOT NULL DEFAULT '{}',
+            created_at TEXT NOT NULL
+        )
+        """
+    )
+    conn.execute(
+        """
         CREATE TABLE IF NOT EXISTS desk_messages (
             message_id TEXT PRIMARY KEY,
             conference_id TEXT NOT NULL,

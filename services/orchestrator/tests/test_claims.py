@@ -60,12 +60,19 @@ def test_hallucinated_audit_has_typed_claims() -> None:
     assert citation["page"] == 1
 
 
-def test_human_claims_are_not_checked() -> None:
+def test_human_claims_record_the_checks_that_ran() -> None:
     result = audit_paper(HUMAN, "job-human-a2")
     assert result["claims"]
-    assert all(item["verdict"] == "not_checked" for item in result["claims"])
     for item in result["claims"]:
         DeskClaim.model_validate(item)
+    citation = next(item for item in result["claims"] if item["claim_type"] == "citation" and "Lee" in item["text"])
+    assert citation["verdict"] == "supported"
+    number = next(
+        item
+        for item in result["claims"]
+        if item["claim_type"] == "numerical" and item["section"] == "abstract" and "61.0" in item["text"]
+    )
+    assert number["verdict"] == "supported"
 
 
 def test_extract_validates_desk_claim() -> None:
