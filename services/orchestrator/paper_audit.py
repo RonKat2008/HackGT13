@@ -10,6 +10,7 @@ import fitz
 import claims as claim_extract
 import evidence as evidence_index
 import probe
+import references as reference_index
 import shelf
 import verify as claim_verify
 
@@ -165,6 +166,7 @@ def audit_paper(
 
     def citations() -> None:
         issues.extend(_citation_issues(claims, sections.get("references", "")))
+        reference_index.attach(typed_claims, sections.get("references", ""))
 
     def numbers() -> None:
         issues.extend(_number_issues(sections.get("abstract", ""), sections.get("results", "")))
@@ -609,6 +611,8 @@ def _settle_local(
 
 
 def _settle_citation(claim: dict[str, Any], references: str) -> None:
+    if claim.get("catalog"):
+        return
     match = CITATION_RE.search(str(claim.get("text") or ""))
     if match is None:
         return
