@@ -9,15 +9,22 @@ import re
 import threading
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
+from collections.abc import Callable
 from typing import Any
 
 import jev
 from jev import DEFAULT_CAP
+from loop import retry_guard_dropped
+from models import Claim
+from playbook import apply as apply_patches
+from roles import critic
 
 JUDGED_TYPES = {"numerical", "numerical_comparison", "semantic"}
 NUMBER_RE = re.compile(r"\d+\.\d+")
 _POOL_WORKERS = 4
 _CACHE_LOCK = threading.Lock()
+REVIEW_CONFIDENCE = 0.70
+MAX_ROUNDS = 3
 
 
 def cache_key(claim_text: str, source_text: str) -> str:
@@ -68,12 +75,112 @@ def finished_sentence(claims: list[dict[str, Any]]) -> str:
     return "No numerical or semantic claim was sent to Jev."
 
 
+def critic_sentence(claims: list[dict[str, Any]]) -> str:
+    reviewed = [
+        claim
+        for claim in claims
+        if any(str(step).startswith("Round ") for step in (claim.get("steps") or []))
+    ]
+    if not reviewed:
+        return "No uncertain verdict to review."
+    count = len(reviewed)
+    unit = "claim" if count == 1 else "claims"
+    return f"Reviewed {count} uncertain {unit}."
+
+
+def review_uncertain(
+    claims: list[dict[str, Any]],
+    emit: Callable[[str], None] | None = None,
+) -> None:
+    key = os.environ.get("OPENROUTER_API_KEY", "").strip()
+    if not key or (os.environ.get("PYTEST_CURRENT_TEST") and os.environ.get("ARX_ROUNDS") != "live"):
+        return
+    for claim in claims:
+        if not _uncertain(claim):
+            continue
+        original = str(claim.get("text") or "")
+        claim["rounds"] = max(int(claim.get("rounds") or 0), 1)
+        for round_num in range(claim["rounds"] + 1, MAX_ROUNDS + 1):
+            legacy = _legacy_claim(claim)
+            patch = critic(legacy, str(claim.get("verdict") or "not_mentioned"), ["evidence"])
+            if retry_guard_dropped(original, legacy.text):
+                continue
+            _query, lines = apply_patches([patch], "evidence")
+            neighbors = 1 if "neighbors:1" in lines else 2
+            _widen(claim, neighbors)
+            if retry_guard_dropped(original, str(claim.get("text") or "")):
+                claim["text"] = original
+            answer = jev.judge_claim(original, build_source_text(claim), api_key=key)
+            claim["rounds"] = round_num
+            _append_step(claim, f"Round {round_num}: widened to ±{neighbors} sentences")
+            if emit is not None:
+                emit(f"Round {round_num}: widened to ±{neighbors} sentences")
+            if answer.get("not_run"):
+                claim["verdict"] = "not_checked"
+                claim["confidence"] = 0.0
+                break
+            label = str(answer.get("label") or "not_mentioned")
+            if label not in {"supported", "contradicted", "not_mentioned"}:
+                label = "not_checked"
+            _apply(claim, label, _confidence(answer.get("confidence")))
+            claim["text"] = original
+            if not _uncertain(claim):
+                break
+        else:
+            if _uncertain(claim):
+                claim["verdict"] = "insufficient_evidence"
+                claim["confidence"] = float(claim.get("confidence") or 0)
+                claim["reason"] = "Requires human review"
+                claim["rounds"] = MAX_ROUNDS
+
+
+def _uncertain(claim: dict[str, Any]) -> bool:
+    if str(claim.get("claim_type") or "") not in JUDGED_TYPES:
+        return False
+    steps = [str(step) for step in (claim.get("steps") or [])]
+    if "Jev judgment" not in steps:
+        return False
+    verdict = str(claim.get("verdict") or "")
+    if verdict == "not_mentioned":
+        return True
+    if verdict in {"supported", "contradicted"} and float(claim.get("confidence") or 0) < REVIEW_CONFIDENCE:
+        return True
+    return False
+
+
+def _legacy_claim(claim: dict[str, Any]) -> Claim:
+    evidence = claim.get("evidence") or []
+    span = str(evidence[0].get("text") or "") if evidence else str(claim.get("text") or "")
+    return Claim(
+        id=str(claim.get("claim_id") or "claim"),
+        text=str(claim.get("text") or "claim"),
+        type=str(claim.get("claim_type") or "semantic"),
+        evidence_span=span or "paper",
+        source_id=str(claim.get("job_id") or "desk"),
+        source_kind="paper",
+    )
+
+
+def _widen(claim: dict[str, Any], neighbors: int) -> None:
+    evidence = list(claim.get("evidence") or [])
+    evidence.append(
+        {
+            "page": claim.get("page"),
+            "section": str(claim.get("section") or "results"),
+            "text": f"Neighbor window ±{neighbors} sentences around the claim.",
+            "role": "context",
+            "source": "paper",
+        }
+    )
+    claim["evidence"] = evidence
+
+
 def judge_claims(claims: list[dict[str, Any]]) -> None:
     key = os.environ.get("OPENROUTER_API_KEY", "").strip()
     judged = [
         claim
         for claim in claims
-        if str(claim.get("claim_type") or "") in JUDGED_TYPES
+        if not claim.get("computation") and str(claim.get("claim_type") or "") in JUDGED_TYPES
     ]
     if not key:
         for claim in judged:
