@@ -25,7 +25,7 @@
     },
     "product": {
       "type": "string",
-      "enum": ["stormcite", "landfall"]
+      "enum": ["stormcite", "landfall", "arxaudit"]
     },
     "kind": {
       "type": "string",

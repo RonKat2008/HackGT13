@@ -1,0 +1,249 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://hackgt13.dev/schema/batch.json",
+  "title": "CreateBatch",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["product", "kind", "name", "arxiv_ids"],
+  "properties": {
+    "product": {
+      "const": "arxaudit"
+    },
+    "kind": {
+      "type": "string",
+      "enum": ["links", "batch"]
+    },
+    "name": {
+      "type": ["string", "null"]
+    },
+    "arxiv_ids": {
+      "$ref": "#/$defs/arxiv_ids"
+    },
+    "conference_id": {
+      "type": ["string", "null"]
+    }
+  },
+  "$defs": {
+    "kind": {
+      "type": "string",
+      "enum": ["links", "batch"]
+    },
+    "arxiv_ids": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      },
+      "maxItems": 8
+    },
+    "batch": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["batch_id", "kind", "name", "arxiv_ids", "created_at"],
+      "properties": {
+        "batch_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "kind": {
+          "$ref": "#/$defs/kind"
+        },
+        "name": {
+          "type": ["string", "null"]
+        },
+        "arxiv_ids": {
+          "$ref": "#/$defs/arxiv_ids"
+        },
+        "created_at": {
+          "type": "string",
+          "format": "date-time"
+        }
+      }
+    },
+    "paper_job": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "job_id",
+        "batch_id",
+        "arxiv_id",
+        "run_id",
+        "status",
+        "specialist",
+        "fitness",
+        "issue_count",
+        "author_name",
+        "author_email",
+        "contacted_at"
+      ],
+      "properties": {
+        "job_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "batch_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "arxiv_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "run_id": {
+          "type": ["string", "null"]
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "queued",
+            "running",
+            "passed",
+            "contradicted",
+            "unresolved",
+            "error"
+          ]
+        },
+        "specialist": {
+          "type": ["string", "null"]
+        },
+        "fitness": {
+          "type": ["number", "null"]
+        },
+        "issue_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "author_name": {
+          "type": ["string", "null"]
+        },
+        "author_email": {
+          "type": ["string", "null"]
+        },
+        "contacted_at": {
+          "type": ["string", "null"],
+          "format": "date-time"
+        }
+      }
+    },
+    "event": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "event_id",
+        "job_id",
+        "specialist",
+        "state",
+        "detail",
+        "created_at"
+      ],
+      "properties": {
+        "event_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "job_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "specialist": {
+          "type": "string",
+          "minLength": 1
+        },
+        "state": {
+          "type": "string",
+          "enum": ["started", "finished", "failed"]
+        },
+        "detail": {
+          "type": "string"
+        },
+        "created_at": {
+          "type": "string",
+          "format": "date-time"
+        }
+      }
+    },
+    "shelf_row": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["title", "label", "text", "cosine"],
+      "properties": {
+        "title": {
+          "type": "string"
+        },
+        "label": {
+          "type": "string",
+          "enum": ["human", "ai"]
+        },
+        "text": {
+          "type": "string"
+        },
+        "cosine": {
+          "type": "number"
+        }
+      }
+    },
+    "probe": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["auc", "hidden"],
+      "properties": {
+        "auc": {
+          "type": "number"
+        },
+        "hidden": {
+          "type": "boolean"
+        }
+      }
+    },
+    "conference": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["conference_id", "name", "contact_email"],
+      "properties": {
+        "conference_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "contact_email": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "issue_reason": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "issue_type",
+        "claim_text",
+        "evidence_span",
+        "jev_label",
+        "reason"
+      ],
+      "properties": {
+        "issue_type": {
+          "type": "string",
+          "enum": ["citation", "number", "dataset", "test", "support"]
+        },
+        "claim_text": {
+          "type": "string"
+        },
+        "evidence_span": {
+          "type": "string"
+        },
+        "jev_label": {
+          "type": "string",
+          "enum": ["supported", "contradicted", "not_mentioned"]
+        },
+        "reason": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    }
+  }
+}
