@@ -1,0 +1,196 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://hackgt13.dev/schema/run.json",
+  "title": "Run",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "run_id",
+    "product",
+    "goal",
+    "goal_hash",
+    "replay_of",
+    "round",
+    "fitness",
+    "final_status",
+    "claims",
+    "tests",
+    "jev",
+    "playbook_loaded",
+    "playbook_patches",
+    "budget"
+  ],
+  "$defs": {
+    "product": {
+      "type": "string",
+      "enum": ["stormcite", "landfall"]
+    },
+    "claim": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "text",
+        "type",
+        "evidence_span",
+        "source_id",
+        "source_kind"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "text": {
+          "type": "string",
+          "minLength": 1
+        },
+        "type": {
+          "type": "string",
+          "minLength": 1
+        },
+        "evidence_span": {
+          "type": "string",
+          "minLength": 1
+        },
+        "source_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "source_kind": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "test_result": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "status", "log_excerpt", "where"],
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "status": {
+          "type": "string",
+          "enum": ["passed", "failed", "not_run"]
+        },
+        "log_excerpt": {
+          "type": "string"
+        },
+        "where": {
+          "type": "string",
+          "enum": ["kaggle", "local"]
+        }
+      }
+    },
+    "jev_verdict": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["claim_id", "label", "confidence", "probs"],
+      "properties": {
+        "claim_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "label": {
+          "type": "string",
+          "enum": ["supported", "contradicted", "not_mentioned"]
+        },
+        "confidence": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "probs": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "number"
+          }
+        }
+      }
+    },
+    "budget": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["jev_calls", "rounds"],
+      "properties": {
+        "jev_calls": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "rounds": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    }
+  },
+  "properties": {
+    "run_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "product": {
+      "$ref": "#/$defs/product"
+    },
+    "goal": {
+      "type": "string",
+      "minLength": 1
+    },
+    "goal_hash": {
+      "type": "string",
+      "minLength": 1
+    },
+    "replay_of": {
+      "type": ["string", "null"],
+      "format": "uuid"
+    },
+    "round": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 3
+    },
+    "fitness": {
+      "type": "number"
+    },
+    "final_status": {
+      "type": "string",
+      "enum": ["passed", "contradicted", "unresolved"]
+    },
+    "claims": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/claim"
+      }
+    },
+    "tests": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/test_result"
+      }
+    },
+    "jev": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/jev_verdict"
+      }
+    },
+    "playbook_loaded": {
+      "type": "array",
+      "items": {
+        "$ref": "patch.json"
+      }
+    },
+    "playbook_patches": {
+      "type": "array",
+      "items": {
+        "$ref": "patch.json"
+      }
+    },
+    "budget": {
+      "$ref": "#/$defs/budget"
+    }
+  }
+}

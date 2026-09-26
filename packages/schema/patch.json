@@ -1,0 +1,73 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://hackgt13.dev/schema/patch.json",
+  "title": "Patch",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "id",
+    "product",
+    "kind",
+    "target",
+    "trigger",
+    "body",
+    "patch_text",
+    "status",
+    "wins",
+    "losses",
+    "fitness_ema",
+    "uses"
+  ],
+  "properties": {
+    "id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "product": {
+      "type": "string",
+      "enum": ["stormcite", "landfall"]
+    },
+    "kind": {
+      "type": "string",
+      "enum": [
+        "query_template",
+        "prompt_rule",
+        "span_window",
+        "retry_guard_block"
+      ]
+    },
+    "target": {
+      "type": "string",
+      "minLength": 1
+    },
+    "trigger": {
+      "type": "string",
+      "minLength": 1
+    },
+    "body": {
+      "type": "string"
+    },
+    "patch_text": {
+      "type": "string"
+    },
+    "status": {
+      "type": "string",
+      "enum": ["draft", "live", "archived"]
+    },
+    "wins": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "losses": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "fitness_ema": {
+      "type": "number"
+    },
+    "uses": {
+      "type": "integer",
+      "minimum": 0
+    }
+  }
+}
