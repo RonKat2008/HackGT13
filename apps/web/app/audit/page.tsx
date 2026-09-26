@@ -5,7 +5,6 @@ import { AuditStart } from "./start";
 
 type Job = (typeof review.jobs)[number];
 type Issue = (typeof review.issues)[number];
-type Neighbor = (typeof review.neighbors)[number];
 type Probe = (typeof review.probe);
 type TestLog = (typeof review.test_log);
 
@@ -44,7 +43,6 @@ function readDatasetsLinks(): {
 export default function AuditPage() {
   const jobs = review.jobs as Job[];
   const issues = review.issues as Issue[];
-  const neighbors = review.neighbors as Neighbor[];
   const probe = review.probe as Probe;
   const testLog = review.test_log as TestLog;
   const { datasetUrl, kernelUrl } = readDatasetsLinks();
@@ -65,7 +63,6 @@ export default function AuditPage() {
       <AuditStart
         jobs={jobs}
         issues={issues}
-        neighbors={neighbors}
         probe={probe}
         testLog={testLog}
         datasetUrl={datasetUrl}

@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import type { Paper, Quote } from "@/lib/desk";
+import { verdictLabel, verdictTone } from "@/lib/verdict";
 import { deletePaper } from "../../actions";
 import { AskDesk } from "../ask";
 import { MorphLink } from "../../morph-link";
@@ -169,7 +170,9 @@ export function Workflow({
         </h1>
         <p className="mt-2 text-xs text-[#6b645c]">
           {paper.arxiv_id}
-          {paper.author_name ? ` · ${paper.author_name}` : ""} · {paper.status}
+          {paper.author_name ? ` · ${paper.author_name}` : ""}
+          {" · "}
+          <span className={verdictTone(paper.status)}>{verdictLabel(paper.status)}</span>
         </p>
         {part ? <p className="mt-3 max-w-xl text-sm leading-6 text-[#1c1915]">{partNote(paper, part)}</p> : null}
       </header>

@@ -35,13 +35,6 @@ type Issue = {
   confidence: number;
 };
 
-type Neighbor = {
-  title: string;
-  label: string;
-  text: string;
-  cosine: number;
-};
-
 type Probe = {
   auc: number;
   hidden: boolean;
@@ -110,7 +103,6 @@ function lastLogLines(log: string, maxLines: number): string {
 export function AuditStart({
   jobs,
   issues,
-  neighbors,
   probe,
   testLog,
   datasetUrl,
@@ -118,7 +110,6 @@ export function AuditStart({
 }: {
   jobs: Job[];
   issues: Issue[];
-  neighbors: Neighbor[];
   probe: Probe;
   testLog: TestLog;
   datasetUrl: string | null;
@@ -346,10 +337,6 @@ export function AuditStart({
         </nav>
       ) : null}
 
-      <p className="mb-8 text-sm text-zinc-600">
-        Fixture includes {neighbors.length} shelf neighbors.
-      </p>
-
       <div className="grid flex-1 gap-6 md:grid-cols-3">
         <section className="flex flex-col gap-4">
           <h2 className="text-sm font-medium tracking-wide text-zinc-500">
@@ -477,25 +464,6 @@ export function AuditStart({
               No issue for this paper in the fixture.
             </p>
           )}
-
-          <p className="text-sm text-zinc-700">
-            Nearest reference abstracts. This is not a verdict.
-          </p>
-          <ul className="flex flex-col gap-3">
-            {neighbors.map((neighbor) => (
-              <li
-                key={neighbor.title}
-                className="border border-zinc-200 px-3 py-3 text-sm text-zinc-900"
-              >
-                <p className="font-medium">{neighbor.title}</p>
-                <p className="mt-1 text-zinc-600">
-                  Label: {neighbor.label} · Cosine:{" "}
-                  {neighbor.cosine.toFixed(2)}
-                </p>
-                <p className="mt-2 text-zinc-700">{neighbor.text}</p>
-              </li>
-            ))}
-          </ul>
 
           {probe.hidden ? (
             <p className="text-sm text-zinc-700">

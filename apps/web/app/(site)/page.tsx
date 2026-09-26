@@ -59,7 +59,7 @@ export default function HomePage() {
         </ol>
         <p className="mt-12 max-w-2xl text-sm leading-7 text-[#1c1915]">
           An issue is a failed citation, a number missing from the results, weak support, or a failed rerun.
-          A likeness score is not a verdict. Shelf labels are Human or Generated.
+          A likeness score is not a verdict.
         </p>
       </section>
 

@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import type { ConferenceDesk, Paper } from "@/lib/desk";
+import { failureWhere, verdictLabel } from "@/lib/verdict";
 import { AskDesk } from "./[id]/ask";
 import { LABELS, ORDER } from "./specialists";
 
@@ -22,9 +23,9 @@ function reach(paper: Paper): number {
 }
 
 function resultOf(paper: Paper): { label: string; tone: string } | null {
-  if (paper.status === "passed") return { label: "Passed", tone: "text-[#2f6b4f]" };
-  if (paper.status === "contradicted") return { label: "Failed", tone: "text-[#8c3a2f]" };
-  if (paper.status === "error") return { label: "Not read", tone: "text-[#8c3a2f]" };
+  if (paper.status === "passed") return { label: verdictLabel(paper.status), tone: "text-[#2f6b4f]" };
+  if (paper.status === "contradicted") return { label: verdictLabel(paper.status), tone: "text-[#8c3a2f]" };
+  if (paper.status === "error") return { label: verdictLabel(paper.status), tone: "text-[#8c3a2f]" };
   return null;
 }
 
@@ -147,6 +148,7 @@ function PaperBar({ conferenceId, paper }: { conferenceId: string; paper: Paper 
   const cursor = reach(paper);
   const running = paper.status === "running";
   const result = resultOf(paper);
+  const where = paper.status === "contradicted" ? failureWhere(paper.issues) : "";
   const [hint, setHint] = useState<string | null>(null);
   const stages = [...ORDER, "result"] as const;
 
@@ -159,7 +161,12 @@ function PaperBar({ conferenceId, paper }: { conferenceId: string; paper: Paper 
         >
           {titleOf(paper)}
         </Link>
-        {result ? <span className={`shrink-0 text-sm ${result.tone}`}>{result.label}</span> : null}
+        {result ? (
+          <span className={`shrink-0 text-sm ${result.tone}`}>
+            {result.label}
+            {where ? ` · ${where}` : ""}
+          </span>
+        ) : null}
       </div>
       <p className="mt-1 text-[11px] tracking-[0.04em] text-[#6b645c]">{paper.arxiv_id}</p>
       <div className="relative mt-4 h-8">

@@ -5,6 +5,7 @@ import { createClient } from "@/lib/supabase/server";
 type DeskUser = { id: string; email: string };
 
 export async function deskUser(): Promise<DeskUser | null> {
+  if (!process.env.SUPABASE_URL || !process.env.SUPABASE_PUBLISHABLE_KEY) return null;
   const supabase = await createClient();
   const { data, error } = await supabase.auth.getClaims();
   const claims = data?.claims;

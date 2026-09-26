@@ -67,12 +67,9 @@ export function Films() {
           <p className="film-beat film-d3 mt-3 text-xs leading-5 text-[#6b645c]">
             The number 95.2 in the abstract is absent from the results.
           </p>
-          <p className="film-beat film-d4 mt-5 text-[11px] tracking-[0.12em] text-[#6b645c]">
-            Nearest reference abstracts. This is not a verdict.
-          </p>
         </Window>
         <p className="mt-4 text-sm leading-6 text-[#6b645c]">
-          The marked sentence carries the reason. The shelf is context.
+          The marked sentence carries the reason.
         </p>
       </div>
     </div>

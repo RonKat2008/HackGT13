@@ -1,15 +1,9 @@
 import { deskFetch, type ConferenceDesk } from "@/lib/desk";
+import { verdictLabel, verdictTone } from "@/lib/verdict";
 import { requireDeskUser } from "@/lib/session";
 import Link from "next/link";
 import { PaperRail } from "../../rail";
 import { DeskShell } from "../../shell";
-
-function verdict(status: string): string {
-  if (status === "passed") return "Passed";
-  if (status === "contradicted") return "Failed";
-  if (status === "error") return "Not read";
-  return "Not judged yet";
-}
 
 export default async function ReportsPage({ params }: { params: Promise<{ id: string }> }) {
   const user = await requireDeskUser();
@@ -52,7 +46,7 @@ export default async function ReportsPage({ params }: { params: Promise<{ id: st
                       <span className="font-[family-name:var(--desk-serif)] text-2xl leading-tight">
                         {paper.title || paper.arxiv_id}
                       </span>
-                      <span className="shrink-0 text-sm">{verdict(paper.status)}</span>
+                      <span className={`shrink-0 text-sm ${verdictTone(paper.status)}`}>{verdictLabel(paper.status)}</span>
                     </span>
                     <span className="mt-1 block text-xs text-[#6b645c]">{paper.arxiv_id}</span>
                     {paper.issues[0]?.reason ? (

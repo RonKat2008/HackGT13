@@ -37,6 +37,14 @@ export function finishedDetail(paper: Paper, name: string): string {
   return event.detail;
 }
 
+function outcome(paper: Paper, name: string): "fail" | "pass" | "open" {
+  if (cardState(paper, name) !== "done") return "open";
+  if (paper.events.some((event) => event.specialist === name && event.state === "failed")) return "fail";
+  const types = ISSUE_OF[name] ?? [];
+  if (types.length > 0 && paper.issues.some((issue) => types.includes(issue.issue_type))) return "fail";
+  return "pass";
+}
+
 function cardState(paper: Paper, name: string): "idle" | "now" | "done" {
   if (paper.status === "running" && paper.specialist === name) return "now";
   if (finishedDetail(paper, name) || paper.events.some((event) => event.specialist === name && event.state === "finished")) {
@@ -90,28 +98,36 @@ export function Specialists({
         {announcement}
       </p>
       <ol className="mt-4 flex flex-col gap-3">
-        {ORDER.map((name) => {
-          const state = cardState(paper, name);
-          const sentence = finishedDetail(paper, name);
-          return (
-            <li
-              key={name}
-              className={`${state === "done" ? "desk-rise" : ""} ${focus === name ? "rounded-xl bg-white px-2 py-2 ring-1 ring-[#c4a15a]" : ""}`}
-            >
-              <p className="text-sm text-[#1c1915]">{LABELS[name]}</p>
-              {state === "now" ? <span className="desk-rule mt-1" /> : null}
-              {state === "now" ? (
-                <p className="mt-1 flex items-center gap-2 text-xs text-[#8a6a2f]">
-                  <span className="desk-pulse inline-block size-1.5 rounded-full bg-[#c4a15a]" />
-                  now
-                </p>
-              ) : null}
-              {state === "done" && sentence ? (
-                <p className="mt-1 text-xs leading-5 text-[#6b645c]">{sentence}</p>
-              ) : null}
-            </li>
-          );
-        })}
+        {[...ORDER]
+          .sort((a, b) => {
+            const rank = { fail: 0, open: 1, pass: 2 };
+            return rank[outcome(paper, a)] - rank[outcome(paper, b)];
+          })
+          .map((name) => {
+            const state = cardState(paper, name);
+            const result = outcome(paper, name);
+            const sentence = finishedDetail(paper, name);
+            const tone =
+              result === "fail" ? "text-[#8c3a2f]" : result === "pass" ? "text-[#2f6b4f]" : "text-[#1c1915]";
+            return (
+              <li
+                key={name}
+                className={`${state === "done" ? "desk-rise" : ""} ${focus === name ? "rounded-xl bg-white px-2 py-2 ring-1 ring-[#c4a15a]" : ""}`}
+              >
+                <p className={`text-sm font-semibold ${tone}`}>{LABELS[name]}</p>
+                {state === "now" ? <span className="desk-rule mt-1" /> : null}
+                {state === "now" ? (
+                  <p className="mt-1 flex items-center gap-2 text-xs text-[#8a6a2f]">
+                    <span className="desk-pulse inline-block size-1.5 rounded-full bg-[#c4a15a]" />
+                    now
+                  </p>
+                ) : null}
+                {state === "done" && sentence ? (
+                  <p className={`mt-1 text-xs leading-5 ${tone}`}>{sentence}</p>
+                ) : null}
+              </li>
+            );
+          })}
       </ol>
       <div className="mt-6 border-t border-[#e4dcd0] pt-4">
         {paper.status === "passed" && paper.issues.length === 0 ? (

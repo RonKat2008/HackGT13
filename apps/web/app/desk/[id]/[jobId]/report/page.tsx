@@ -1,9 +1,9 @@
-import { deskFetch, deskRaw, type ConferenceDesk } from "@/lib/desk";
+import { deskFetch, type ConferenceDesk, type Paper } from "@/lib/desk";
 import { requireDeskUser } from "@/lib/session";
 import Link from "next/link";
 import { PaperRail } from "../../../rail";
 import { DeskShell } from "../../../shell";
-import { ReportBody } from "./body";
+import { ReportView } from "./view";
 
 export default async function ReportPage({
   params,
@@ -12,11 +12,10 @@ export default async function ReportPage({
 }) {
   const user = await requireDeskUser();
   const { id, jobId } = await params;
-  const [desk, report] = await Promise.all([
+  const [desk, paper] = await Promise.all([
     deskFetch<ConferenceDesk>(`/desk/conferences/${id}`),
-    deskRaw(`/desk/papers/${jobId}/report`),
+    deskFetch<Paper>(`/desk/papers/${jobId}`),
   ]);
-  const markdown = report.ok ? await report.text() : "This report could not be opened.";
   return (
     <DeskShell
       rail={
@@ -30,8 +29,8 @@ export default async function ReportPage({
         />
       }
     >
-      <article className="min-h-0 flex-1 overflow-y-auto px-6 py-8 lg:px-10">
-        <div className="mb-8 flex flex-wrap items-center gap-4 text-sm">
+      <div className="flex min-h-0 flex-1 flex-col">
+        <div className="flex shrink-0 flex-wrap items-center gap-4 px-6 py-4 text-sm lg:px-10">
           <Link href={`/desk/${id}/${jobId}`} className="text-[#6b645c]">
             Back to the paper
           </Link>
@@ -48,8 +47,8 @@ export default async function ReportPage({
             Download all as zip
           </a>
         </div>
-        <ReportBody markdown={markdown} />
-      </article>
+        <ReportView paper={paper} />
+      </div>
     </DeskShell>
   );
 }
