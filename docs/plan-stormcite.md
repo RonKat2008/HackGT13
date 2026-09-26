@@ -1,5 +1,7 @@
 # Plan: StormCite
 
+Superseded. The research product is ArxAudit. Follow [plan-arxaudit.md](plan-arxaudit.md). Person B starts at "Person B" in that file. Person A does not edit `apps/web` or `kaggle/`.
+
 Audit **any** research paper for hallucinated results. Score sections for AI-written vs human-written text using representations learned from a Kaggle corpus. The score sorts the queue. It does not convict the paper.
 
 Depends on [plan-orchestrator.md](plan-orchestrator.md). Follow [AGENTS.md](../AGENTS.md): one subagent per step, verify, then the next step. Submissions close **Sep 27, 12:00pm EDT**.

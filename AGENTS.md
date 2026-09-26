@@ -6,11 +6,11 @@ HackGT 13. The plans are the build order. Go one step at a time. Use subagents. 
 
 1. Finish [docs/plan-orchestrator.md](docs/plan-orchestrator.md) until its "Done when" section is true.
 2. Then build the product the user names:
-   - [docs/plan-stormcite.md](docs/plan-stormcite.md) — any research paper. Hallucinated results. AI-written vs human-written scores from Kaggle representations. AI-likeness is not proof.
-   - [docs/plan-landfall.md](docs/plan-landfall.md) — one storm, one metro, public data only.
+   - [docs/plan-arxaudit.md](docs/plan-arxaudit.md) — ArxAudit, any research paper. The user picked this. Person A owns the API. Person B owns the screen and the Kaggle pull. Start together after the schema gate in that file.
+   - [docs/plan-landfall.md](docs/plan-landfall.md) — one storm, one metro, public data only. Do not build this.
 3. If the user has not picked a product, stop after the orchestrator and ask. Do not build both.
 
-StormCite is not a hurricane-paper tool. Do not narrow it back to storms.
+ArxAudit is not a hurricane-paper tool. Do not narrow it back to storms. The old name StormCite is retired.
 
 ## Subagents
 
@@ -26,7 +26,7 @@ For the first step in the active plan whose verify command is not already passin
 6. On success, spawn one `code-reviewer`. Python steps also get `python-reviewer`. TSX steps also get `react-reviewer`. One reviewer at a time. Fix only what breaks the step's pass bar.
 7. Then, and only then, open the next step.
 
-Do not run a swarm. Do not hand a subagent a whole plan. Two steps run at once only when both say they are parallel-ok and their file lists do not overlap. Person A and Person B tracks may run together only after the plan says the dependency is met (orchestrator O2 before web W1, StormCite S15 before UI U1, Landfall L9 before map M1).
+Do not run a swarm. Do not hand a subagent a whole plan. Two steps run at once only when both say they are parallel-ok and their file lists do not overlap. Person A and Person B tracks may run together only after the plan says the dependency is met (orchestrator O2 before web W1, ArxAudit schema gate before Person B, Landfall L9 before map M1).
 
 ## Pass bar
 
@@ -39,9 +39,9 @@ Do not run a swarm. Do not hand a subagent a whole plan. Two steps run at once o
 
 - Recursive improvement is the playbook in [docs/plan-orchestrator.md](docs/plan-orchestrator.md): typed patches (`query_template`, `prompt_rule`, `span_window`), fitness after each run, live vs archived, and `POST /runs/{id}/replay`. Agents do not edit their own source to make a run pass. A patch that makes fitness fall is archived. A patch that drops facts from a claim is blocked by the retry-guard Jev check.
 - Jev (OpenRouter Decisions API) judges a claim against evidence text. Grok writes prose. Parsers, pytest, and citation lookups run before Jev.
-- On StormCite, a high AI-likeness score never creates an issue by itself. Issues come from failed citations, failed number checks, low claim-to-evidence similarity, or a failed Kaggle rerun. If the probe AUC on the Kaggle holdout is under 0.60, hide AI-likeness.
+- On ArxAudit, a high AI-likeness score never creates an issue by itself. Issues come from failed citations, failed number checks, low claim-to-evidence similarity, or a failed Kaggle rerun. If the probe AUC on the Kaggle holdout is under 0.60, hide AI-likeness.
 - Keys: `XAI_API_KEY`, `OPENROUTER_API_KEY`, `KAGGLE_USERNAME`, `KAGGLE_KEY`. Never `NEXT_PUBLIC_`.
-- Voice is StormCite's briefing and Landfall's sitrep. Imagine is Landfall only, labeled generated footage.
+- Voice is ArxAudit's briefing and Landfall's sitrep. Imagine is Landfall only, labeled generated footage.
 - Public data only. No private cameras, no 911 or CAD calls, no posting verdicts to X.
 - Do not commit unless the user asks.
 
