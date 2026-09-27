@@ -1,3 +1,4 @@
+import json
 import time
 from pathlib import Path
 
@@ -87,3 +88,115 @@ def test_upload_starts_on_the_same_shelf(tmp_path, monkeypatch) -> None:
     assert added["status"] in {"queued", "running", "passed", "contradicted"}
     papers = list_author_papers("author-a")["papers"]
     assert papers[0]["job_id"] == added["job_id"]
+
+
+_BANNED = ("fake", "fraudulent", "fabricated", "ai-written")
+_FIRST_MARK = "Smith, 2099"
+_SECOND_MARK = "Lee, 2020"
+
+
+def test_ask_stays_on_one_paper_and_keeps_history(tmp_path, monkeypatch) -> None:
+    import author as author_mod
+
+    client = _client(tmp_path, monkeypatch)
+    first = client.post("/author/papers", json={"owner": "author-a", "arxiv_id": "0000.00001"})
+    second = client.post("/author/papers", json={"owner": "author-a", "arxiv_id": "0000.00002"})
+    first_id = first.json()["job_id"]
+    second_id = second.json()["job_id"]
+    _wait(client, first_id)
+    _wait(client, second_id)
+
+    seen: dict = {}
+
+    def fake_grok(paper, question, history):
+        messages = author_mod._grok_messages(paper, question, history)
+        seen["messages"] = messages
+        seen["history"] = history
+        blob = json.dumps(messages)
+        assert _FIRST_MARK in blob or "95.2" in blob
+        assert _SECOND_MARK not in blob
+        assert "61.0" not in blob
+        return "The stored number on this paper needs a check against the table."
+
+    monkeypatch.setattr(author_mod, "_author_grok", fake_grok)
+
+    asked = client.post(
+        f"/author/papers/{first_id}/ask",
+        json={"question": "What failed on this paper?"},
+    )
+    assert asked.status_code == 200
+    body = asked.json()
+    assert body["answer"]
+    assert "action" in body
+    assert "quotes" in body and "trace" in body
+    for word in _BANNED:
+        assert word not in body["answer"].lower()
+    assert _SECOND_MARK not in body["answer"]
+
+    follow = client.post(
+        f"/author/papers/{first_id}/ask",
+        json={"question": "Which citation is the problem?"},
+    )
+    assert follow.status_code == 200
+    hist_blob = json.dumps(seen["messages"])
+    assert "What failed on this paper?" in hist_blob
+    assert any(turn["text"] == "What failed on this paper?" for turn in seen["history"])
+
+    other_thread = client.get(f"/author/papers/{second_id}/messages")
+    assert other_thread.status_code == 200
+    assert other_thread.json()["messages"] == []
+
+    thread = client.get(f"/author/papers/{first_id}/messages")
+    assert thread.status_code == 200
+    texts = [item["text"] for item in thread.json()["messages"]]
+    assert texts[0] == "What failed on this paper?"
+    assert texts[2] == "Which citation is the problem?"
+
+
+def test_verdict_change_is_refused_without_grok(tmp_path, monkeypatch) -> None:
+    import author as author_mod
+
+    client = _client(tmp_path, monkeypatch)
+    added = client.post("/author/papers", json={"owner": "author-a", "arxiv_id": "0000.00001"})
+    job_id = added.json()["job_id"]
+    _wait(client, job_id)
+
+    def boom(*_args, **_kwargs):
+        raise AssertionError("Grok must not run for a verdict edit")
+
+    monkeypatch.setattr(author_mod, "_author_grok", boom)
+
+    for question in ("Please change the verdict", "mark it supported"):
+        response = client.post(f"/author/papers/{job_id}/ask", json={"question": question})
+        assert response.status_code == 200
+        body = response.json()
+        assert body["action"]["type"] == "refuse"
+        assert body["answer"] == (
+            "The desk does not change a verdict from chat. The stored read stays as it is."
+        )
+        for word in _BANNED:
+            assert word not in body["answer"].lower()
+
+
+def test_empty_question_is_400_and_chair_job_is_404(tmp_path, monkeypatch) -> None:
+    client = _client(tmp_path, monkeypatch)
+    added = client.post("/author/papers", json={"owner": "author-a", "arxiv_id": "0000.00001"})
+    job_id = added.json()["job_id"]
+
+    empty = client.post(f"/author/papers/{job_id}/ask", json={"question": "   "})
+    assert empty.status_code == 400
+
+    missing = client.post("/author/papers/not-a-paper/ask", json={"question": "What failed?"})
+    assert missing.status_code == 404
+
+    chair_add = client.post(
+        f"/desk/conferences/{DEMO_CONFERENCE_ID}/submissions",
+        json={"lines": ["0000.00002"]},
+    )
+    assert chair_add.status_code == 200
+    chair = client.get(f"/desk/conferences/{DEMO_CONFERENCE_ID}")
+    chair_job = next(
+        paper["job_id"] for paper in chair.json()["papers"] if paper["arxiv_id"] == "0000.00002"
+    )
+    wrong = client.post(f"/author/papers/{chair_job}/ask", json={"question": "What failed?"})
+    assert wrong.status_code == 404

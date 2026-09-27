@@ -2,13 +2,17 @@
 
 from __future__ import annotations
 
+import json
+import os
 from typing import Any
 from uuid import uuid4
 
-from batches import BatchError, _db
+import voice
+from batches import BatchError, _db, _now
 from desk import (
     DEMO_CONFERENCE_ID,
     _ensure_desk,
+    _reading,
     add_submissions,
     add_upload,
     conference_desk,
@@ -20,6 +24,22 @@ from desk import (
 SHELF_NAME = "Author shelf"
 SHELF_EMAIL = "author@arxaudit.local"
 
+AUTHOR_PROMPT = """You answer one author about one paper of theirs.
+Use only that paper's stored text, issues, and claims you are given.
+You may use a few paragraphs when the author needs detail.
+Talk about unresolved citations, missing numbers, unsupported claims, and failed reruns.
+A sentence that needs a person was left unsure. Leave it that way.
+Stay with the stored citation, number, formula, and passage.
+You cannot change a verdict. If asked, say the desk does not change a verdict from chat.
+Do not say fake, fraudulent, fabricated, or AI-written.
+If the paper status is queued or running, say the read has not finished.
+Quote a short span when you point at a problem.
+"""
+
+_REFUSE_SENTENCE = (
+    "The desk does not change a verdict from chat. The stored read stays as it is."
+)
+
 
 def _tables(conn: Any) -> None:
     _ensure_desk(conn)
@@ -28,6 +48,20 @@ def _tables(conn: Any) -> None:
         CREATE TABLE IF NOT EXISTS author_shelves (
             owner TEXT PRIMARY KEY,
             conference_id TEXT NOT NULL
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS author_messages (
+            message_id TEXT PRIMARY KEY,
+            job_id TEXT NOT NULL,
+            position INTEGER NOT NULL,
+            role TEXT NOT NULL,
+            body TEXT NOT NULL,
+            quotes_json TEXT NOT NULL DEFAULT '[]',
+            trace_json TEXT NOT NULL DEFAULT '[]',
+            created_at TEXT NOT NULL
         )
         """
     )
@@ -153,3 +187,193 @@ def get_author_paper(job_id: str) -> dict[str, Any]:
     if paper.get("conference_id") == DEMO_CONFERENCE_ID:
         raise BatchError(404, "paper not found")
     return paper
+
+
+def _load_history(job_id: str, limit: int = 12) -> list[dict[str, str]]:
+    with _db() as conn:
+        _tables(conn)
+        rows = conn.execute(
+            """
+            SELECT role, body
+            FROM author_messages
+            WHERE job_id = ?
+            ORDER BY position DESC
+            LIMIT ?
+            """,
+            (job_id, limit),
+        ).fetchall()
+    rows = list(reversed(rows))
+    return [{"role": str(row["role"]), "text": str(row["body"])} for row in rows]
+
+
+def _store_exchange(
+    job_id: str,
+    question: str,
+    answer: str,
+    quotes: list[dict[str, Any]],
+    trace: list[dict[str, Any]],
+) -> None:
+    with _db() as conn:
+        _tables(conn)
+        position = conn.execute(
+            "SELECT COALESCE(MAX(position), 0) FROM author_messages WHERE job_id = ?",
+            (job_id,),
+        ).fetchone()[0]
+        created = _now()
+        conn.execute(
+            """
+            INSERT INTO author_messages (
+                message_id, job_id, position, role, body,
+                quotes_json, trace_json, created_at
+            ) VALUES (?, ?, ?, 'you', ?, '[]', '[]', ?)
+            """,
+            (str(uuid4()), job_id, int(position) + 1, question, created),
+        )
+        conn.execute(
+            """
+            INSERT INTO author_messages (
+                message_id, job_id, position, role, body,
+                quotes_json, trace_json, created_at
+            ) VALUES (?, ?, ?, 'desk', ?, ?, ?, ?)
+            """,
+            (
+                str(uuid4()),
+                job_id,
+                int(position) + 2,
+                answer,
+                json.dumps(quotes),
+                json.dumps(trace),
+                created,
+            ),
+        )
+        conn.commit()
+
+
+def list_author_messages(job_id: str) -> dict[str, list[dict[str, Any]]]:
+    if not _on_shelf(job_id):
+        raise BatchError(404, "paper not found")
+    with _db() as conn:
+        _tables(conn)
+        rows = conn.execute(
+            """
+            SELECT role, body, quotes_json
+            FROM author_messages
+            WHERE job_id = ?
+            ORDER BY position ASC
+            """,
+            (job_id,),
+        ).fetchall()
+    messages: list[dict[str, Any]] = []
+    for item in rows:
+        message: dict[str, Any] = {"role": item["role"], "text": item["body"]}
+        if item["role"] == "desk":
+            quotes = json.loads(item["quotes_json"] or "[]")
+            if quotes:
+                message["quotes"] = quotes
+        messages.append(message)
+    return {"messages": messages}
+
+
+def _paper_block(paper: dict[str, Any]) -> str:
+    issues = paper.get("issues") or []
+    issue_lines = "\n".join(
+        f"- {item['issue_type']}: {item['reason']} | {item['evidence_span']}"
+        for item in issues
+    ) or "- none"
+    text = (paper.get("paper_text") or "").strip() or (paper.get("abstract") or "").strip()
+    text = text[:4000]
+    return (
+        f"{paper.get('title') or 'Untitled'} @{paper['arxiv_id']} status {paper['status']}\n"
+        f"Issues:\n{issue_lines}\nClaims:\n{voice.claim_lines(paper)}\n{text}"
+    )
+
+
+def _grok_messages(
+    paper: dict[str, Any], question: str, history: list[dict[str, str]]
+) -> list[dict[str, str]]:
+    messages: list[dict[str, str]] = [
+        {"role": "system", "content": AUTHOR_PROMPT + "\n\n" + _paper_block(paper)},
+    ]
+    for turn in history[-12:]:
+        role = "user" if turn["role"] == "you" else "assistant"
+        messages.append({"role": role, "content": turn["text"]})
+    messages.append({"role": "user", "content": question})
+    return messages
+
+
+def _post_grok(messages: list[dict[str, str]]) -> str | None:
+    key = os.environ.get("XAI_API_KEY", "").strip()
+    if not key:
+        return None
+    try:
+        import httpx
+
+        response = httpx.post(
+            "https://api.x.ai/v1/chat/completions",
+            headers={"Authorization": f"Bearer {key}"},
+            json={"model": "grok-4.6", "messages": messages},
+            timeout=30,
+        )
+    except Exception:
+        return None
+    if response.status_code != 200:
+        return None
+    try:
+        content = response.json()["choices"][0]["message"]["content"]
+    except (KeyError, IndexError, TypeError, ValueError):
+        return None
+    return content if isinstance(content, str) and content.strip() else None
+
+
+def _author_grok(
+    paper: dict[str, Any], question: str, history: list[dict[str, str]]
+) -> str | None:
+    return _post_grok(_grok_messages(paper, question, history))
+
+
+def _author_local(paper: dict[str, Any]) -> str:
+    status = str(paper.get("status") or "")
+    if status in {"queued", "running"}:
+        return "The read has not finished yet. Ask again when the stored read is ready."
+    issues = paper.get("issues") or []
+    label = paper.get("title") or paper.get("arxiv_id") or "This paper"
+    if not paper.get("paper_text") and not issues:
+        return f"{label} has no stored read yet. The read has not finished."
+    if not issues:
+        return f"{label} has nothing to report from the stored issues."
+    lines = [
+        f"{label} {issue['issue_type']}: {issue['reason']}"
+        for issue in issues
+    ]
+    return "\n".join(lines)
+
+
+def ask_author_paper(job_id: str, question: str) -> dict[str, Any]:
+    asked = question.strip()
+    if not asked:
+        raise BatchError(400, "question is empty")
+    if not _on_shelf(job_id):
+        raise BatchError(404, "paper not found")
+    paper = paper_desk(job_id)
+    if paper.get("conference_id") == DEMO_CONFERENCE_ID:
+        raise BatchError(404, "paper not found")
+
+    history = _load_history(job_id, limit=12)
+
+    def grok(_conference: str, q: str, papers: list[dict[str, Any]]) -> str | None:
+        return _author_grok(papers[0], q, history)
+
+    def local(papers: list[dict[str, Any]]) -> str:
+        return _author_local(papers[0])
+
+    answer, action = voice.finish(
+        asked, [paper], grok, local, str(paper.get("title") or paper["arxiv_id"])
+    )
+    trace, quotes = _reading([paper], answer)
+    _store_exchange(job_id, asked, answer, quotes, trace)
+    return {
+        "answer": answer,
+        "quotes": quotes,
+        "trace": trace,
+        "action": action,
+    }

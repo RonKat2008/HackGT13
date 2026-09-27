@@ -513,3 +513,27 @@ def author_paper(job_id: str) -> dict:
     except BatchError as exc:
         _batch_http(exc)
 
+
+class AuthorAskBody(BaseModel):
+    question: str
+
+
+@app.post("/author/papers/{job_id}/ask")
+def author_ask(job_id: str, body: AuthorAskBody) -> dict:
+    from author import ask_author_paper
+
+    try:
+        return ask_author_paper(job_id, body.question)
+    except BatchError as exc:
+        _batch_http(exc)
+
+
+@app.get("/author/papers/{job_id}/messages")
+def author_messages(job_id: str) -> dict:
+    from author import list_author_messages
+
+    try:
+        return list_author_messages(job_id)
+    except BatchError as exc:
+        _batch_http(exc)
+
