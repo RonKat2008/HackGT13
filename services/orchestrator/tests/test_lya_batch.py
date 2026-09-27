@@ -180,7 +180,8 @@ def test_judge_claims_api_path_uses_judge_claim(monkeypatch) -> None:
 
     def fake_judge(claim_text, evidence=None, **_kwargs):
         calls.append(claim_text)
-        return {"verdict": "supported", "confidence": 0.92, "not_run": False}
+        verdict = "supported" if "A" in claim_text else "contradicted"
+        return {"verdict": verdict, "confidence": 0.92, "not_run": False}
 
     monkeypatch.setattr("lya.judge_claim", fake_judge)
     pairs = [
@@ -188,9 +189,26 @@ def test_judge_claims_api_path_uses_judge_claim(monkeypatch) -> None:
         ("Claim B.", [{"text": "ev B"}]),
     ]
     results = judge_claims(pairs)
-    assert len(results) == 2
-    assert calls == ["Claim A.", "Claim B."]
+    assert sorted(calls) == ["Claim A.", "Claim B."]
     assert results[0]["verdict"] == "supported"
+    assert results[1]["verdict"] == "contradicted"
+
+
+def test_lya_api_misses_run_together(monkeypatch) -> None:
+    import threading
+
+    monkeypatch.delenv("LYA_MODEL", raising=False)
+    barrier = threading.Barrier(4)
+
+    def fake_judge(claim_text, evidence=None, **_kwargs):
+        barrier.wait(timeout=2)
+        return {"verdict": "supported", "confidence": 0.91, "not_run": False}
+
+    monkeypatch.setattr("lya.judge_claim", fake_judge)
+    pairs = [(f"Claim {index}.", [{"text": "ev"}]) for index in range(4)]
+    results = judge_claims(pairs)
+    assert len(results) == 4
+    assert all(item["verdict"] == "supported" for item in results)
 
 
 def test_generate_many_empty_returns_empty_list() -> None:

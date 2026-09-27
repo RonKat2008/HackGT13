@@ -24,6 +24,7 @@ NUMBER_RE = re.compile(r"\d+\.\d+")
 NUMBER_CHECK = NUMBER_LOCK
 _POOL_WORKERS = 4
 _CACHE_LOCK = threading.Lock()
+_INDEX_LOCK = threading.Lock()
 REVIEW_CONFIDENCE = 0.70
 MAX_ROUNDS = 3
 
@@ -300,8 +301,7 @@ def judge_with_lya(
             continue
         escalations.append((claim, answer))
     escalations.sort(key=lambda item: _jev_escalation_priority(item[0]))
-    for claim, answer in escalations:
-        _jev_after_lya(claim, answer, context, openrouter, lya)
+    _run_escalations(escalations, context, openrouter, lya)
 
 
 def _jev_escalation_priority(claim: dict[str, Any]) -> int:
@@ -370,10 +370,13 @@ def _jev_after_lya(
     _jev_once(claim, openrouter)
     if not _needs_more(claim):
         return
+    if _jev_escalation_priority(claim) > 1:
+        return
     claim["rounds"] = 1
     for round_num in range(2, MAX_ROUNDS + 1):
         import tools
 
+        before = _evidence_key(claim)
         _ensure_index(context)
         names = tools.tools_for(claim)
         for name in names:
@@ -382,6 +385,8 @@ def _jev_after_lya(
         _merge_rows(claim, rows)
         claim["rounds"] = round_num
         if deterministic_final(claim):
+            return
+        if _evidence_key(claim) == before:
             return
         _jev_once(claim, openrouter)
         if not _needs_more(claim):
@@ -393,10 +398,60 @@ def _jev_after_lya(
         claim["rounds"] = MAX_ROUNDS
 
 
+def _run_escalations(
+    escalations: list[tuple[dict[str, Any], dict[str, Any]]],
+    context: dict[str, Any],
+    openrouter: str,
+    lya: Any,
+) -> None:
+    """Same-priority claims share one Jev wave. A harder claim still finishes before an easier one starts."""
+    band: list[tuple[dict[str, Any], dict[str, Any]]] = []
+    band_key: int | None = None
+    for item in escalations:
+        key = _jev_escalation_priority(item[0])
+        if band_key is None or key == band_key:
+            band.append(item)
+            band_key = key
+            continue
+        _run_band(band, context, openrouter, lya)
+        band = [item]
+        band_key = key
+    if band:
+        _run_band(band, context, openrouter, lya)
+
+
+def _run_band(
+    band: list[tuple[dict[str, Any], dict[str, Any]]],
+    context: dict[str, Any],
+    openrouter: str,
+    lya: Any,
+) -> None:
+    def one(item: tuple[dict[str, Any], dict[str, Any]]) -> None:
+        claim, answer = item
+        _jev_after_lya(claim, answer, context, openrouter, lya)
+
+    if len(band) <= 1:
+        for item in band:
+            one(item)
+        return
+    workers = min(_POOL_WORKERS, len(band))
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        futures = [pool.submit(one, item) for item in band]
+        for future in futures:
+            future.result()
+
+
 def _ensure_index(context: dict[str, Any]) -> None:
     if context.get("index") is not None or context.get("_index_tried"):
         return
-    context["_index_tried"] = True
+    with _INDEX_LOCK:
+        if context.get("index") is not None or context.get("_index_tried"):
+            return
+        context["_index_tried"] = True
+        _load_index(context)
+
+
+def _load_index(context: dict[str, Any]) -> None:
     path = str(context.get("path") or "")
     if not path:
         return
@@ -449,6 +504,14 @@ def _needs_more(claim: dict[str, Any]) -> bool:
     if verdict in {"supported", "contradicted", "ambiguous"} and score < REVIEW_CONFIDENCE:
         return True
     return False
+
+
+def _evidence_key(claim: dict[str, Any]) -> tuple[str, ...]:
+    return tuple(
+        str(item.get("text") or "")
+        for item in (claim.get("evidence") or [])
+        if isinstance(item, dict)
+    )
 
 
 def _merge_rows(claim: dict[str, Any], rows: list[dict[str, Any]]) -> None:

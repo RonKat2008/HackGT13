@@ -158,7 +158,7 @@ def test_low_confidence_lya_requests_a_table_search_then_jev_supports(tmp_path, 
     claim = _claim(
         "Our method improves performance by 7.8 percentage points over the baseline.",
         "numerical_comparison",
-        [{"page": 3, "section": "results", "text": "An early clause.", "role": "context", "source": "paper"}],
+        [{"page": 3, "section": "results", "text": "An early clause.", "role": "contradicts", "source": "paper"}],
     )
     original = claim["text"]
     judge_with_lya([claim])
@@ -198,7 +198,19 @@ def test_three_rounds_end_as_insufficient_evidence(tmp_path, monkeypatch) -> Non
         return []
 
     monkeypatch.setattr("tools.run_tools", run_tools)
-    claim = _claim("We show the bound holds for every trial we ran.", "semantic")
+    claim = _claim(
+        "We show the bound holds for every trial we ran.",
+        "semantic",
+        [
+            {
+                "page": 2,
+                "section": "results",
+                "text": "The reported trial breaks the bound.",
+                "role": "contradicts",
+                "source": "paper",
+            }
+        ],
+    )
     original = claim["text"]
     judge_with_lya([claim])
     assert claim["verdict"] == "insufficient_evidence"
@@ -207,6 +219,28 @@ def test_three_rounds_end_as_insufficient_evidence(tmp_path, monkeypatch) -> Non
     assert any(step.startswith("Jev requested ") for step in claim["steps"])
     assert claim["text"] == original
     assert is_finding(claim)
+
+
+def test_ordinary_claims_are_judged_once(tmp_path, monkeypatch) -> None:
+    _enable(monkeypatch, tmp_path)
+    _script_lya(monkeypatch, {"verdict": "not_mentioned", "confidence": 0.4, "not_run": False})
+    calls = _script_jev(
+        monkeypatch,
+        {"label": "not_mentioned", "confidence": 0.4, "probs": {}, "not_run": False},
+    )
+
+    def run_tools(_claim, _names, _context):
+        raise AssertionError("an ordinary claim must not open another round")
+
+    monkeypatch.setattr("tools.run_tools", run_tools)
+    claims = [
+        _claim(f"The method holds in setting {index}.", "semantic", claim_id=f"plain-{index}")
+        for index in range(3)
+    ]
+    judge_with_lya(claims)
+    assert len(calls) == 3
+    assert all(claim["verdict"] == "not_mentioned" for claim in claims)
+    assert all(claim["rounds"] == 0 for claim in claims)
 
 
 def test_demo_titanic_counts_stay_computed(tmp_path, monkeypatch) -> None:

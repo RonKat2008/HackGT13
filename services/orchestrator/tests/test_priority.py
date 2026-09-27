@@ -174,6 +174,49 @@ def test_jev_order_number_miss_unresolved_then_plain(tmp_path, monkeypatch) -> N
     assert plain["text"] == jev_order[2]
 
 
+def test_same_priority_jev_calls_overlap(tmp_path, monkeypatch) -> None:
+    import threading
+
+    _enable(monkeypatch, tmp_path)
+    _low_confidence_lya(monkeypatch)
+    started: list[str] = []
+    barrier = threading.Barrier(3)
+
+    def judge(claim_text, _source_text, transport=None, api_key=None):
+        started.append(claim_text)
+        if "95.2" not in claim_text:
+            barrier.wait(timeout=2)
+        return {
+            "label": "supported",
+            "confidence": 0.95,
+            "probs": {"supported": 0.95},
+            "not_run": False,
+        }
+
+    monkeypatch.setattr("jev.judge_claim", judge)
+    number_miss = _claim(
+        "Accuracy reached 95.2% on the benchmark.",
+        "numerical",
+        claim_id="number",
+        evidence=[
+            {
+                "page": 2,
+                "section": "results",
+                "text": "The model accuracy was 61.0%.",
+                "role": "contradicts",
+                "source": "paper",
+            }
+        ],
+    )
+    plains = [
+        _claim(f"The method generalizes in setting {index}.", claim_id=f"plain-{index}")
+        for index in range(3)
+    ]
+    judge_with_lya([*plains, number_miss])
+    assert started[0] == number_miss["text"]
+    assert number_miss["verdict"] == "supported"
+
+
 def test_drain_query_keeps_paper_jobs_position_order() -> None:
     source = inspect.getsource(desk._drain)
     assert "ORDER BY paper_jobs.position ASC" in source

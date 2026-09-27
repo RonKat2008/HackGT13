@@ -5,6 +5,8 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import threading
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from typing import Any
 
@@ -41,6 +43,8 @@ _SCHEMA = {
 }
 
 _NOT_RUN = {"verdict": "not_checked", "confidence": 0.0, "not_run": True}
+_API_WORKERS = 4
+_CACHE_LOCK = threading.Lock()
 
 
 def model_id() -> str:
@@ -156,8 +160,18 @@ def judge_claims(pairs: list[tuple[str, list[dict[str, Any]]]]) -> list[dict[str
         else:
             api_misses.append((index, claim_text, rows))
 
-    for index, claim_text, rows in api_misses:
-        results[index] = judge_claim(claim_text, rows)
+    if len(api_misses) <= 1:
+        for index, claim_text, rows in api_misses:
+            results[index] = judge_claim(claim_text, rows)
+    else:
+        workers = min(_API_WORKERS, len(api_misses))
+        with ThreadPoolExecutor(max_workers=workers) as pool:
+            futures = [
+                (index, pool.submit(judge_claim, claim_text, rows))
+                for index, claim_text, rows in api_misses
+            ]
+            for index, future in futures:
+                results[index] = future.result()
 
     if local_misses:
         from lya_local import adapter_dir, generate_many
@@ -267,35 +281,37 @@ def _confidence(value: Any) -> float:
 
 
 def _read_cache(key: str) -> dict[str, Any] | None:
-    conn = _connect()
-    try:
-        row = conn.execute(
-            "SELECT verdict, confidence FROM lya_cache WHERE cache_key = ?",
-            (key,),
-        ).fetchone()
-    finally:
-        conn.close()
+    with _CACHE_LOCK:
+        conn = _connect()
+        try:
+            row = conn.execute(
+                "SELECT verdict, confidence FROM lya_cache WHERE cache_key = ?",
+                (key,),
+            ).fetchone()
+        finally:
+            conn.close()
     if row is None:
         return None
     return {"verdict": row["verdict"], "confidence": float(row["confidence"]), "not_run": False}
 
 
 def _write_cache(key: str, verdict: str, score: float) -> None:
-    conn = _connect()
-    try:
-        conn.execute(
-            """
-            INSERT INTO lya_cache (cache_key, verdict, confidence, created_at)
-            VALUES (?, ?, ?, ?)
-            ON CONFLICT(cache_key) DO UPDATE SET
-                verdict = excluded.verdict,
-                confidence = excluded.confidence
-            """,
-            (key, verdict, score, datetime.now(timezone.utc).isoformat()),
-        )
-        conn.commit()
-    finally:
-        conn.close()
+    with _CACHE_LOCK:
+        conn = _connect()
+        try:
+            conn.execute(
+                """
+                INSERT INTO lya_cache (cache_key, verdict, confidence, created_at)
+                VALUES (?, ?, ?, ?)
+                ON CONFLICT(cache_key) DO UPDATE SET
+                    verdict = excluded.verdict,
+                    confidence = excluded.confidence
+                """,
+                (key, verdict, score, datetime.now(timezone.utc).isoformat()),
+            )
+            conn.commit()
+        finally:
+            conn.close()
 
 
 def _connect():

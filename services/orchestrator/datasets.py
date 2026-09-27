@@ -7,6 +7,7 @@ import hashlib
 import io
 import json
 import os
+import re
 import sqlite3
 import subprocess
 from datetime import datetime, timezone
@@ -47,6 +48,10 @@ Search = Callable[[str], list[dict[str, Any]]]
 Judge = Callable[[str, str], str | None]
 TableFinder = Callable[[str, str], Path | None]
 TableDownloader = Callable[[str, str], Path | None]
+
+# One list call per slug for this process, including a timeout or an empty result.
+_LOOKUP_CACHE: dict[str, list[dict[str, Any]]] = {}
+_KAGGLE_WORD = re.compile(r"\bkaggle\b", re.I)
 
 
 def _normalize_slug(slug: str) -> str:
@@ -139,6 +144,8 @@ def acquire_table(
         find is not None or download is not None or _under_download_roots(cached, key)
     ):
         return cached
+    if download is None and find is None and key not in CATALOG:
+        return None
     downloader = download if download is not None else repro.download_table
     table = downloader(key, file_name)
     if table is not None:
@@ -156,15 +163,37 @@ def _candidate(slug: str, title: str = "", columns: list[str] | None = None, row
     }
 
 
+def _sentences(text: str) -> list[str]:
+    parts = re.split(r"(?<=[.!?])\s+|\n+", text)
+    cleaned = [part.strip() for part in parts if part.strip()]
+    return cleaned or ([text.strip()] if text.strip() else [])
+
+
+def _slug_needs_kaggle(sentence: str, slug: str) -> bool:
+    """A catalog table is enough. Any other owner/name must sit in a sentence that says Kaggle."""
+    if slug in CATALOG:
+        return True
+    left, _, right = slug.partition("/")
+    if left.isdigit() or right.isdigit():
+        return False
+    return _KAGGLE_WORD.search(sentence) is not None
+
+
+def names_public_table(text: str) -> bool:
+    """True when a later Kaggle call could rerun a table this text actually names."""
+    return bool(_mentions(text))
+
+
 def _mentions(text: str) -> list[dict[str, Any]]:
     found: list[dict[str, Any]] = []
     seen: set[str] = set()
-    for match in repro.SLUG_RE.finditer(text):
-        slug = match.group(1).lower()
-        if slug in seen:
-            continue
-        seen.add(slug)
-        found.append(_candidate(slug))
+    for sentence in _sentences(text):
+        for match in repro.SLUG_RE.finditer(sentence):
+            slug = match.group(1).lower()
+            if slug in seen or not _slug_needs_kaggle(sentence, slug):
+                continue
+            seen.add(slug)
+            found.append(_candidate(slug))
     lowered = text.lower()
     for name, slug in repro.KNOWN_DATASETS.items():
         if name in lowered and slug not in seen:
@@ -201,6 +230,15 @@ def _score(candidate: dict[str, Any], *, needed: set[str], rows_expected: int | 
     if rows_expected is not None and rows == rows_expected:
         score += 1
     return score
+
+
+def _lookup_once(query: str) -> list[dict[str, Any]]:
+    key = query.strip().lower()
+    if key in _LOOKUP_CACHE:
+        return _LOOKUP_CACHE[key]
+    found = _kaggle_search(query)
+    _LOOKUP_CACHE[key] = found
+    return found
 
 
 def _kaggle_search(query: str) -> list[dict[str, Any]]:
@@ -279,8 +317,6 @@ def resolve(
                 break
     if search is not None:
         extra = search(query or text[:120])
-    elif query:
-        extra = _kaggle_search(query)
     else:
         extra = []
     by_slug: dict[str, dict[str, Any]] = {}

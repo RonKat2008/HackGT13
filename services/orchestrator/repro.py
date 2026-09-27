@@ -665,9 +665,16 @@ def reproduce(
     from dsl import Spec, formula
 
     context = "\n".join(sections.get(name) or "" for name in ("methods", "results", "abstract"))
+    mentioned = "\n".join(
+        [context, *[str(claim.get("text") or "") for claim in claims]]
+    )
+    if not datasets.names_public_table(mentioned):
+        return []
     computations: list[dict[str, Any]] = []
+    acquired: dict[str, Any] = {}
+    ask = model if model is not None else (lambda _text: None)
     for sentence in _dataset_sentences(claims, sections):
-        specs = compiler.compile_claim(sentence, ask=model)
+        specs = compiler.compile_claim(sentence, ask=ask)
         if not specs:
             continue
         resolved = datasets.resolve(f"{sentence}\n{context}", specs)
@@ -691,7 +698,9 @@ def reproduce(
                 base["log"] = "Exact dataset version could not be verified."
             computations.append(base)
             continue
-        table = datasets.acquire_table(slug, "")
+        if slug not in acquired:
+            acquired[slug] = datasets.acquire_table(slug, "")
+        table = acquired[slug]
         if table is None:
             computations.append(base)
             continue

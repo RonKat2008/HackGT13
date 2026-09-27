@@ -162,6 +162,49 @@ def test_kaggle_paper_checks_rows_counts_and_means(tmp_path: Path, monkeypatch: 
     assert all("code" not in item for item in result)
 
 
+def test_samples_sentence_does_not_call_grok_or_kaggle(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("KAGGLE_USERNAME", "user")
+    monkeypatch.setenv("KAGGLE_KEY", "key")
+    monkeypatch.setenv("XAI_API_KEY", "test-xai")
+
+    def boom(*_args: object, **_kwargs: object) -> None:
+        raise AssertionError("kaggle or grok")
+
+    monkeypatch.setattr(repro, "ask_model", boom)
+    monkeypatch.setattr(repro.subprocess, "run", boom)
+    import datasets
+
+    monkeypatch.setattr(datasets.subprocess, "run", boom)
+    result = repro.reproduce(
+        [],
+        _sections(
+            "During 2018/2019 the training set contains 15000 samples. "
+            "Code is at github.com/google-research/bert."
+        ),
+    )
+    assert result == []
+
+
+def test_unknown_kaggle_slug_does_not_download(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(repro, "DOWNLOADS", tmp_path)
+    monkeypatch.setenv("RUN_DB", str(tmp_path / "repro.sqlite"))
+
+    def boom(*_args: object, **_kwargs: object) -> None:
+        raise AssertionError("kaggle cli")
+
+    monkeypatch.setattr(repro, "download_table", boom)
+    import datasets
+
+    monkeypatch.setattr(datasets, "_kaggle_search", boom)
+    result = repro.reproduce(
+        [],
+        _sections("We use the Kaggle dataset demo/widgets. The table contains 100 rows."),
+        model=lambda _prompt: None,
+    )
+    assert result
+    assert all(item["status"] == "could_not_run" for item in result)
+
+
 def test_audit_records_a_failed_rerun() -> None:
     calls: list[tuple[str, str, str]] = []
 
