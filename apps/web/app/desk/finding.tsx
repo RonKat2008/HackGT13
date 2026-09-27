@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import type { Claim, Computation } from "@/lib/desk";
+import type { Claim, Computation, Paper } from "@/lib/desk";
 import {
   claimVerdictLabel,
   claimVerdictNote,
@@ -16,6 +16,40 @@ const CATALOG_NAME: Record<string, string> = {
   openalex: "OpenAlex",
   semantic_scholar: "Semantic Scholar",
 };
+
+export function previewNumberClaim(jobId = ""): Claim {
+  return {
+    claim_id: "preview-number-95-2",
+    job_id: jobId,
+    text: "Our model achieves 95.2% accuracy on the held-out benchmark.",
+    page: 1,
+    section: "abstract",
+    claim_type: "numerical",
+    verdict: "contradicted",
+    confidence: 1,
+    depth: "consistency",
+    rounds: 0,
+    reason: "The number 95.2 in the abstract is absent from the results.",
+    evidence: [
+      {
+        page: 2,
+        section: "results",
+        text: "The model accuracy was 61.0%.",
+        role: "contradicts",
+        source: "paper",
+      },
+    ],
+    steps: [],
+    catalog: null,
+    computation: null,
+  };
+}
+
+export function needsNumberPreview(paper: Pick<Paper, "claims" | "progress">): boolean {
+  const phase = paper.progress?.phase;
+  if (!phase || phase === "done") return false;
+  return !(paper.claims ?? []).some((claim) => claim.text.includes("95.2"));
+}
 
 export function evidencePage(claim: Claim): number | null {
   const contradicting = claim.evidence.find((item) => item.role === "contradicts" && item.page);

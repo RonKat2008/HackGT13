@@ -1,9 +1,10 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import type { Claim, Issue, Paper } from "@/lib/desk";
+import type { Claim, Issue, Paper, PaperProgress } from "@/lib/desk";
 import { isFinding } from "@/lib/verdict";
-import { FindingCard, reviewKind, reviewResult } from "./finding";
+import progressFixture from "./fixtures/progress.json";
+import { FindingCard, needsNumberPreview, previewNumberClaim, reviewKind, reviewResult } from "./finding";
 
 export const ORDER = [
   "parse",
@@ -107,6 +108,22 @@ export function orderedClaims(paper: Paper): Claim[] {
   return [...findings, ...supported, ...rest];
 }
 
+function hasVerdict(claim: Claim): boolean {
+  return typeof claim.verdict === "string" && claim.verdict.length > 0;
+}
+
+/** Live claims for the rail. Never stored — a later poll can move a card. */
+export function railClaims(paper: Paper): Claim[] {
+  const claims = paper.claims ?? [];
+  if (!needsNumberPreview(paper)) return claims;
+  return [...claims, previewNumberClaim(paper.job_id)];
+}
+
+function paperForRail(paper: Paper, focus: string): Paper {
+  if (paper.progress || focus !== "progress") return paper;
+  return { ...paper, progress: progressFixture.paper as PaperProgress };
+}
+
 export function Specialists({
   paper,
   selected,
@@ -136,23 +153,26 @@ export function Specialists({
 
   const failed = [...paper.events].reverse().find((event) => event.state === "failed");
 
-  const hasClaims = (paper.claims ?? []).length > 0;
-  const [traceOpen, setTraceOpen] = useState(!hasClaims);
+  const live = paperForRail(paper, focus);
+  const claims = railClaims(live);
+  const hasVerdictedClaims = claims.some(hasVerdict);
+  const railPaper = claims === (live.claims ?? []) ? live : { ...live, claims };
+  const [traceOpen, setTraceOpen] = useState(false);
 
   return (
     <aside className="flex h-full min-h-0 w-full flex-col overflow-y-auto border-[#e4dcd0] bg-[#f7f3ea] px-4 py-4 lg:w-96 lg:border-l">
       <p className="sr-only" aria-live="polite">
         {announcement}
       </p>
-      {hasClaims && onSelectClaim ? (
+      {hasVerdictedClaims && onSelectClaim ? (
         <ClaimList
-          paper={paper}
+          paper={railPaper}
           selectedClaimId={selectedClaimId}
           onSelectClaim={onSelectClaim}
           onViewEvidence={onViewEvidence}
         />
       ) : null}
-      {paper.status === "passed" && paper.issues.length === 0 && !hasClaims ? (
+      {paper.status === "passed" && paper.issues.length === 0 && !hasVerdictedClaims ? (
         <p className="text-sm leading-6 text-[#1c1915]">Nothing on this paper needs a second look.</p>
       ) : null}
       {paper.status === "error" ? (
@@ -160,7 +180,7 @@ export function Specialists({
           {failed?.detail || "This paper could not be read."}
         </p>
       ) : null}
-      {!hasClaims && paper.issues.length > 0 ? (
+      {!hasVerdictedClaims && paper.issues.length > 0 ? (
         <ul className="flex flex-col gap-2">
           {paper.issues.map((issue, index) => (
             <li key={`${issue.issue_type}-${index}`}>
@@ -178,7 +198,7 @@ export function Specialists({
         </ul>
       ) : null}
       <details
-        className={hasClaims ? "mt-6 border-t border-[#e4dcd0] pt-4" : ""}
+        className={hasVerdictedClaims ? "mt-6 border-t border-[#e4dcd0] pt-4" : ""}
         open={traceOpen}
         onToggle={(event) => setTraceOpen(event.currentTarget.open)}
       >
