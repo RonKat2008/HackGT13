@@ -14,6 +14,22 @@ HALLUCINATED = FIXTURES / "hallucinated.pdf"
 HUMAN = FIXTURES / "human.pdf"
 
 
+def test_split_drops_a_heading_and_table_rows_from_the_next_sentence() -> None:
+    text = (
+        "Table 2: Accuracy on the held-out benchmark.\n"
+        "Method            Accuracy\n"
+        "Baseline A        82.1\n"
+        "Ours              89.2\n"
+        "Our method improves performance by 7.8 percentage points over the strongest baseline.\n"
+        "Discussion\n"
+        "Training converges in fewer steps than the baseline because the router is trained jointly.\n"
+    )
+    parts = split_sentences(text)
+    assert any(part.startswith("Our method improves performance by 7.8") for part in parts)
+    assert any(part.startswith("Training converges in fewer steps") for part in parts)
+    assert all("Baseline A" not in part and not part.startswith("Discussion") for part in parts)
+
+
 def test_split_keeps_decimals_and_et_al() -> None:
     text = (
         "Our model reaches 95.2% accuracy (Vaswani et al., 2017). "

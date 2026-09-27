@@ -23,6 +23,11 @@ def _use_hash() -> bool:
     return os.environ.get("ARX_EMBEDDER", "").strip().lower() == "hash"
 
 
+def _rank_by_overlap() -> bool:
+    """Hash vectors do not carry meaning, so shared words decide the order."""
+    return _use_hash() or _MINILM_FAILED
+
+
 _MINILM: tuple[Any, Any] | None = None
 _MINILM_FAILED = False
 
@@ -159,7 +164,7 @@ class PaperIndex:
             range(len(chosen)),
             key=lambda slot: (
                 0 if prefer_conflicts and conflicts(claim_text, self.chunks[chosen[slot]]["text"]) else 1,
-                -_overlap(claim_text, self.chunks[chosen[slot]]["text"]) if _use_hash() else 0,
+                -_overlap(claim_text, self.chunks[chosen[slot]]["text"]) if _rank_by_overlap() else 0,
                 -float(scores[slot]),
             ),
         )
@@ -192,15 +197,15 @@ def _chunks(path: Path, sections: dict[str, str]) -> list[dict[str, Any]]:
         for section, body in claim_extract._sections_to_scan(sections, path):
             if section in claim_extract.SKIP_SECTIONS:
                 continue
-            for sentence in claim_extract.split_sentences(body):
-                if sentence in seen:
+            for piece in claim_extract.evidence_pieces(body):
+                if piece in seen:
                     continue
-                seen.add(sentence)
+                seen.add(piece)
                 rows.append(
                     {
-                        "page": claim_extract.find_page(doc, sentence),
+                        "page": claim_extract.find_page(doc, piece),
                         "section": section,
-                        "text": sentence,
+                        "text": piece,
                     }
                 )
         return rows
@@ -241,11 +246,40 @@ def attach(path: str | Path, sections: dict[str, str], typed_claims: list[dict[s
         for hit in contradicting:
             evidence.append(_evidence_row(hit, "contradicts"))
         claim["evidence"] = evidence
-        claim["_neighbors"] = index.around(str(claim.get("text") or ""), 2)
+        claim["_neighbors"] = index.around(str(claim.get("text") or ""), 6)
+        merge_neighbors(claim)
         steps = list(claim.get("steps") or [])
         steps.append("Retrieved supporting evidence")
         steps.append("Searched for contradictory evidence")
         claim["steps"] = steps
+
+
+def merge_neighbors(claim: dict[str, Any]) -> None:
+    """The sentences beside a claim are evidence on the first pass, before Lya."""
+    evidence = list(claim.get("evidence") or [])
+    seen = {
+        " ".join(str(item.get("text") or "").split())
+        for item in evidence
+        if isinstance(item, dict)
+    }
+    seen.add(" ".join(str(claim.get("text") or "").split()))
+    for row in claim.get("_neighbors") or []:
+        if not isinstance(row, dict):
+            continue
+        text = " ".join(str(row.get("text") or "").split())
+        if not text or text in seen:
+            continue
+        seen.add(text)
+        evidence.append(
+            {
+                "page": row.get("page") if row.get("page") is not None else claim.get("page"),
+                "section": str(row.get("section") or claim.get("section") or ""),
+                "text": text,
+                "role": "context",
+                "source": "paper",
+            }
+        )
+    claim["evidence"] = evidence
 
 
 def _evidence_row(hit: dict[str, Any], role: str) -> dict[str, Any]:

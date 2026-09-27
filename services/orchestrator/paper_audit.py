@@ -397,7 +397,8 @@ def _attach_evidence_claim(index: evidence_index.PaperIndex, claim: dict[str, An
             }
         )
     claim["evidence"] = evidence
-    claim["_neighbors"] = index.around(str(claim.get("text") or ""), 2)
+    claim["_neighbors"] = index.around(str(claim.get("text") or ""), 6)
+    evidence_index.merge_neighbors(claim)
     steps = list(claim.get("steps") or [])
     steps.append("Retrieved supporting evidence")
     steps.append("Searched for contradictory evidence")

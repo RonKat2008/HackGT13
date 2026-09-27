@@ -54,12 +54,69 @@ SEMANTIC_RE = re.compile(
 )
 ABBREV_RE = re.compile(r"\b(?:et al|e\.g|i\.e|fig|vs|dr|mr|ms|prof)\.", re.I)
 SPLIT_RE = re.compile(r"(?<=[.!?])(?:\s+(?=[A-Z])|\n+)")
+STANDALONE_HEADING_RE = re.compile(
+    r"^(?:\d+(?:\.\d+)*\.?\s+)?"
+    r"(?:discussion|related work|conclusion|acknowledgements?|appendix|background)"
+    r"\s*:?\s*$",
+    re.I,
+)
+TABLE_GAP_RE = re.compile(r"\s{3,}")
+
+
+def _is_skipped_line(line: str) -> bool:
+    """A heading, a page number, or a padded table row is not part of the next sentence."""
+    stripped = line.strip()
+    if not stripped:
+        return False
+    if STANDALONE_HEADING_RE.match(stripped):
+        return True
+    if TABLE_GAP_RE.search(line):
+        return True
+    if re.fullmatch(r"\d{1,3}", stripped):
+        return True
+    if len(stripped.split()) <= 6 and not re.search(r"[.!?0-9]", stripped):
+        return True
+    return False
+
+
+def evidence_pieces(text: str) -> list[str]:
+    """Prose sentences and table rows in reading order."""
+    pieces: list[str] = []
+    prose: list[str] = []
+
+    def flush() -> None:
+        if prose:
+            pieces.extend(split_sentences("\n".join(prose)))
+            prose.clear()
+
+    for line in text.splitlines():
+        stripped = line.strip()
+        if not stripped:
+            prose.append("")
+            continue
+        if STANDALONE_HEADING_RE.match(stripped) or re.fullmatch(r"\d{1,3}", stripped):
+            flush()
+            continue
+        if len(stripped.split()) <= 6 and not re.search(r"[.!?0-9]", stripped):
+            flush()
+            continue
+        if TABLE_GAP_RE.search(line):
+            flush()
+            compact = " ".join(stripped.split())
+            if compact:
+                pieces.append(compact)
+            continue
+        prose.append(line)
+    flush()
+    return pieces
 
 
 def split_sentences(text: str) -> list[str]:
     if not text or not text.strip():
         return []
-    masked = ABBREV_RE.sub(lambda match: match.group(0)[:-1] + "\uE000", text)
+    kept = [line for line in text.splitlines() if not _is_skipped_line(line)]
+    prose = "\n".join(kept)
+    masked = ABBREV_RE.sub(lambda match: match.group(0)[:-1] + "\uE000", prose)
     out: list[str] = []
     for part in SPLIT_RE.split(masked):
         sentence = part.replace("\uE000", ".").strip()
