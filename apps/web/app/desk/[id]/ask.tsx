@@ -448,7 +448,14 @@ export function AskDesk({
                 Close
               </button>
             </header>
-            {panel.abstract ? <p className="mt-4 text-sm leading-6 text-[#1c1915]">{panel.abstract}</p> : null}
+            {panel.abstract ? (
+              <details className="mt-4">
+                <summary className="cursor-pointer text-xs text-[#1c1915] underline decoration-[#c4a15a] underline-offset-4">
+                  Abstract
+                </summary>
+                <p className="mt-2 text-sm leading-6 text-[#1c1915]">{panel.abstract}</p>
+              </details>
+            ) : null}
             <p className="mt-4 text-sm leading-6 text-[#6b645c]">This paper has not been read yet.</p>
           </div>
         ) : null}

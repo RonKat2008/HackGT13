@@ -985,7 +985,7 @@ def _finish_error(job_id: str, detail: str) -> None:
 
 
 _CHECK_SPECIALISTS = frozenset(
-    {"evidence", "citations", "numbers", "tables", "dataset", "reproduce"}
+    {"evidence", "citations", "numbers", "tables", "dataset"}
 )
 _DONE_STATUSES = frozenset({"passed", "contradicted", "error"})
 _SETTLED_VERDICTS = frozenset(

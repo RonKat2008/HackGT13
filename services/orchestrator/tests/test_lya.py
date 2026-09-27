@@ -1,4 +1,6 @@
 import json
+import threading
+import time
 from pathlib import Path
 
 import httpx
@@ -450,3 +452,98 @@ def test_number_lock_and_table_lock_are_final() -> None:
     assert deterministic_final(number)
     assert deterministic_final(table)
     assert not deterministic_final(open_claim)
+
+
+def test_default_lya_model_does_not_reason(monkeypatch, tmp_path) -> None:
+    import lya
+
+    monkeypatch.setenv("RUN_DB", str(tmp_path / "lya.sqlite"))
+    monkeypatch.delenv("LYA_MODEL", raising=False)
+    lya._use_reasoning_fallback = False
+    captured: list[dict] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured.append(json.loads(request.content))
+        return httpx.Response(
+            200,
+            json={"choices": [{"message": {"content": '{"verdict": "supported", "confidence": 0.95}'}}]},
+        )
+
+    result = judge_claim(
+        "Accuracy reached 61.0% on the public benchmark.",
+        [{"text": "The model accuracy was 61.0%."}],
+        transport=httpx.MockTransport(handler),
+        api_key=FAKE_XAI,
+    )
+    assert result["verdict"] == "supported"
+    assert captured[0]["model"] == "grok-4.20-0309-non-reasoning"
+    assert "reasoning_effort" not in captured[0]
+
+
+def test_rejected_non_reasoning_model_falls_back_to_low_effort(monkeypatch, tmp_path) -> None:
+    import lya
+
+    monkeypatch.setenv("RUN_DB", str(tmp_path / "lya.sqlite"))
+    monkeypatch.delenv("LYA_MODEL", raising=False)
+    lya._use_reasoning_fallback = False
+    lya._CLIENT = None
+    captured: list[dict] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        body = json.loads(request.content)
+        captured.append(body)
+        if body["model"] == "grok-4.20-0309-non-reasoning":
+            return httpx.Response(404, json={"error": "model not found"})
+        return httpx.Response(
+            200,
+            json={"choices": [{"message": {"content": '{"verdict": "contradicted", "confidence": 0.91}'}}]},
+        )
+
+    try:
+        first = judge_claim(
+            "Accuracy reached 95.2% on the public benchmark.",
+            [{"text": "The model accuracy was 61.0%."}],
+            transport=httpx.MockTransport(handler),
+            api_key=FAKE_XAI,
+        )
+        assert first["verdict"] == "contradicted"
+        assert [item["model"] for item in captured] == [
+            "grok-4.20-0309-non-reasoning",
+            "grok-4.6",
+        ]
+        assert captured[1]["reasoning_effort"] == "low"
+        captured.clear()
+        second = judge_claim(
+            "A different claim about recall on the holdout set.",
+            [{"text": "Recall was 0.81 on the holdout."}],
+            transport=httpx.MockTransport(handler),
+            api_key=FAKE_XAI,
+        )
+        assert second["verdict"] == "contradicted"
+        assert captured[0]["model"] == "grok-4.6"
+        assert captured[0]["reasoning_effort"] == "low"
+    finally:
+        lya._use_reasoning_fallback = False
+        lya._CLIENT = None
+
+
+def test_lya_calls_run_eight_wide(monkeypatch, tmp_path) -> None:
+    import lya
+
+    monkeypatch.setenv("RUN_DB", str(tmp_path / "lya.sqlite"))
+    monkeypatch.setenv("ARX_LYA_WIDTH", "8")
+    monkeypatch.setenv("XAI_API_KEY", FAKE_XAI)
+    monkeypatch.delenv("LYA_MODEL", raising=False)
+    lya._use_reasoning_fallback = False
+    barrier = threading.Barrier(8)
+
+    def judge(_text: str, _evidence=None, **_kwargs: object) -> dict:
+        barrier.wait(timeout=2)
+        return {"verdict": "supported", "confidence": 0.95, "not_run": False}
+
+    monkeypatch.setattr(lya, "judge_claim", judge)
+    pairs = [(f"Claim {index} reports accuracy {index}.1 percent.", [{"text": "evidence row"}]) for index in range(8)]
+    started = time.perf_counter()
+    lya.judge_claims(pairs)
+    assert time.perf_counter() - started < 2
+

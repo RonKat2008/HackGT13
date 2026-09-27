@@ -15,7 +15,8 @@ import httpx
 from models import LYA_VERDICTS
 
 CHAT_URL = "https://api.x.ai/v1/chat/completions"
-DEFAULT_MODEL = "grok-4.6"
+DEFAULT_MODEL = "grok-4.20-0309-non-reasoning"
+REASONING_FALLBACK = "grok-4.6"
 DEFAULT_THRESHOLD = 0.90
 SYSTEM = (
     "Compare the claim with the evidence rows only. "
@@ -43,12 +44,32 @@ _SCHEMA = {
 }
 
 _NOT_RUN = {"verdict": "not_checked", "confidence": 0.0, "not_run": True}
-_API_WORKERS = 4
 _CACHE_LOCK = threading.Lock()
+_CLIENT_LOCK = threading.Lock()
+_FALLBACK_LOCK = threading.Lock()
+_CLIENT: httpx.Client | None = None
+_use_reasoning_fallback = False
 
 
 def model_id() -> str:
     return os.environ.get("LYA_MODEL", DEFAULT_MODEL).strip() or DEFAULT_MODEL
+
+
+def api_width() -> int:
+    raw = os.environ.get("ARX_LYA_WIDTH", "8").strip()
+    try:
+        width = int(raw)
+    except ValueError:
+        width = 8
+    return max(1, min(16, width))
+
+
+def _model_for_call() -> str:
+    configured = model_id()
+    with _FALLBACK_LOCK:
+        if _use_reasoning_fallback and configured == DEFAULT_MODEL:
+            return REASONING_FALLBACK
+    return configured
 
 
 def threshold() -> float:
@@ -144,7 +165,7 @@ def judge_claims(pairs: list[tuple[str, list[dict[str, Any]]]]) -> list[dict[str
     """Judge many claim/evidence pairs. Cache hits skip generation; local misses batch once."""
     if not pairs:
         return []
-    model = model_id()
+    model = _model_for_call()
     results: list[dict[str, Any]] = [dict(_NOT_RUN) for _ in pairs]
     local_misses: list[tuple[int, str, list[dict[str, Any]], str]] = []
     api_misses: list[tuple[int, str, list[dict[str, Any]]]] = []
@@ -164,7 +185,7 @@ def judge_claims(pairs: list[tuple[str, list[dict[str, Any]]]]) -> list[dict[str
         for index, claim_text, rows in api_misses:
             results[index] = judge_claim(claim_text, rows)
     else:
-        workers = min(_API_WORKERS, len(api_misses))
+        workers = min(api_width(), len(api_misses))
         with ThreadPoolExecutor(max_workers=workers) as pool:
             futures = [
                 (index, pool.submit(judge_claim, claim_text, rows))
@@ -206,7 +227,7 @@ def judge_claim(
     api_key: str | None = None,
 ) -> dict[str, Any]:
     rows = list(evidence or [])
-    model = model_id()
+    model = _model_for_call()
     if model == "local" or model.startswith("local:"):
         return _judge_local(claim_text, rows, model)
     key = api_key if api_key is not None else os.environ.get("XAI_API_KEY", "").strip()
@@ -217,22 +238,23 @@ def judge_claim(
     if cached is not None:
         return cached
     user = user_prompt(claim_text, rows)
+    owns = transport is not None
+    client = httpx.Client(transport=transport, timeout=30) if owns else _shared_client()
     try:
-        with httpx.Client(transport=transport, timeout=30) as client:
-            response = client.post(
-                CHAT_URL,
-                headers={"Authorization": f"Bearer {key}"},
-                json={
-                    "model": model,
-                    "messages": [
-                        {"role": "system", "content": SYSTEM},
-                        {"role": "user", "content": user},
-                    ],
-                    "response_format": _SCHEMA,
-                },
-            )
+        response = _post_verdict(client, key, model, user)
+        if _model_rejected(model, response):
+            _remember_fallback()
+            model = REASONING_FALLBACK
+            key_hash = cache_key(claim_text, rows, model)
+            cached = _read_cache(key_hash)
+            if cached is not None:
+                return cached
+            response = _post_verdict(client, key, model, user)
     except httpx.HTTPError:
         return dict(_NOT_RUN)
+    finally:
+        if owns:
+            client.close()
     if response.status_code != 200:
         return dict(_NOT_RUN)
     try:
@@ -244,6 +266,51 @@ def judge_claim(
         return dict(_NOT_RUN)
     _write_cache(key_hash, parsed["verdict"], parsed["confidence"])
     return parsed
+
+
+def _shared_client() -> httpx.Client:
+    global _CLIENT
+    with _CLIENT_LOCK:
+        if _CLIENT is None:
+            _CLIENT = httpx.Client(timeout=30)
+        return _CLIENT
+
+
+def _remember_fallback() -> None:
+    global _use_reasoning_fallback
+    with _FALLBACK_LOCK:
+        _use_reasoning_fallback = True
+
+
+def _post_verdict(client: httpx.Client, key: str, model: str, user: str) -> httpx.Response:
+    body: dict[str, Any] = {
+        "model": model,
+        "messages": [
+            {"role": "system", "content": SYSTEM},
+            {"role": "user", "content": user},
+        ],
+        "response_format": _SCHEMA,
+    }
+    if model == REASONING_FALLBACK:
+        body["reasoning_effort"] = "low"
+    return client.post(
+        CHAT_URL,
+        headers={"Authorization": f"Bearer {key}"},
+        json=body,
+    )
+
+
+def _model_rejected(model: str, response: httpx.Response) -> bool:
+    if model != DEFAULT_MODEL:
+        return False
+    if response.status_code == 404:
+        return True
+    if response.status_code != 400:
+        return False
+    text = response.text.lower()
+    return "model" in text and (
+        "not found" in text or "does not exist" in text or "invalid" in text
+    )
 
 
 def _parse(content: str) -> dict[str, Any] | None:

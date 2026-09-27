@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import re
 import threading
+import time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any, Callable
@@ -85,7 +86,13 @@ _PARALLEL_SPECIALISTS = (
     "dataset",
     "reproduce",
 )
-_AFTER_SPECIALISTS = ("verify", "critic", "stamp")
+_CHECK_SPECIALISTS = (
+    "evidence",
+    "citations",
+    "numbers",
+    "tables",
+    "dataset",
+)
 
 
 class _AuditState:
@@ -237,6 +244,7 @@ def audit_paper(
 ) -> dict[str, Any]:
     record = recorder if recorder is not None else shelf.record_event
     events: list[dict[str, str]] = []
+    timings: dict[str, float] = {}
     issues: list[dict[str, Any]] = []
     text = ""
     sections: dict[str, str] = {key: "" for key in SECTION_KEYS}
@@ -347,30 +355,32 @@ def audit_paper(
             )
 
     def verify() -> None:
-        pending: list[dict[str, Any]] = []
-        for claim in typed_claims:
-            if (
-                str(claim.get("claim_type") or "") == "numerical_comparison"
-                and not claim.get("computation")
-                and not claim_verify.lya_enabled()
-            ):
-                steps = list(claim.get("steps") or [])
-                steps.append("No nearby table, so this gain was left unchecked.")
-                claim["steps"] = steps
-                continue
-            pending.append(claim)
-        claim_verify.judge_with_lya(
-            pending,
-            path=str(path),
-            sections=sections,
-            references=str(sections.get("references") or ""),
-        )
-        _settle_local(typed_claims, sections, kaggle, path)
+        with state.lock:
+            pending: list[dict[str, Any]] = []
+            for claim in typed_claims:
+                if (
+                    str(claim.get("claim_type") or "") == "numerical_comparison"
+                    and not claim.get("computation")
+                    and not claim_verify.lya_enabled()
+                ):
+                    steps = list(claim.get("steps") or [])
+                    steps.append("No nearby table, so this gain was left unchecked.")
+                    claim["steps"] = steps
+                    continue
+                pending.append(claim)
+            claim_verify.judge_with_lya(
+                pending,
+                path=str(path),
+                sections=sections,
+                references=str(sections.get("references") or ""),
+            )
+            _settle_local(typed_claims, sections, kaggle, path)
 
     def critic() -> None:
-        if claim_verify.lya_enabled():
-            return
-        claim_verify.review_uncertain(typed_claims)
+        with state.lock:
+            if claim_verify.lya_enabled():
+                return
+            claim_verify.review_uncertain(typed_claims)
 
     def stamp() -> None:
         collapsed = unique_issues(issues)
@@ -404,8 +414,11 @@ def audit_paper(
 
     def execute(name: str) -> None:
         emit(name, "started", _STARTED[name])
+        started_at = time.perf_counter()
         steps[name]()
+        elapsed = time.perf_counter() - started_at
         with state.lock:
+            timings[name] = elapsed
             issue_snapshot = list(issues)
             source = typed_claims if name in {"claims", "verify", "critic", "tables"} else claims
             claim_snapshot = list(source)
@@ -426,13 +439,20 @@ def audit_paper(
 
     execute("parse")
     execute("claims")
-    with ThreadPoolExecutor(max_workers=len(_PARALLEL_SPECIALISTS)) as pool:
-        futures = [pool.submit(execute, name) for name in _PARALLEL_SPECIALISTS]
-        for future in futures:
+    pool = ThreadPoolExecutor(max_workers=len(_PARALLEL_SPECIALISTS))
+    try:
+        check_futures = [pool.submit(execute, name) for name in _CHECK_SPECIALISTS]
+        repro_future = pool.submit(execute, "reproduce")
+        for future in check_futures:
             future.result()
-    _persist_visible_claims(job_id, typed_claims)
-    for name in _AFTER_SPECIALISTS:
-        execute(name)
+        with state.lock:
+            _persist_visible_claims(job_id, typed_claims)
+        execute("verify")
+        execute("critic")
+        repro_future.result()
+    finally:
+        pool.shutdown(wait=True)
+    execute("stamp")
     _annotate_pages(path, issues)
 
     for claim in typed_claims:
@@ -444,6 +464,7 @@ def audit_paper(
         "hidden": hidden,
         "kaggle": kaggle,
         "section_quality": sections.get("section_quality", "ok"),
+        "timings": timings,
     }
     if hidden_sentence:
         result["hidden_sentence"] = hidden_sentence

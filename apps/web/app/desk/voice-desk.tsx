@@ -153,7 +153,7 @@ export function VoiceDesk() {
   useEffect(() => {
     function onKey(event: KeyboardEvent) {
       if (event.repeat || event.metaKey || event.ctrlKey || event.altKey) return;
-      if (event.key.toLowerCase() !== "v") return;
+      if (event.key?.toLowerCase() !== "v") return;
       const target = event.target;
       if (target instanceof HTMLElement) {
         const tag = target.tagName;

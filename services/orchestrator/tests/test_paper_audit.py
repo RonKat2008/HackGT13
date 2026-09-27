@@ -1,6 +1,7 @@
 import json
 import os
 import threading
+import time
 from pathlib import Path
 
 os.environ.setdefault("ARX_EMBEDDER", "hash")
@@ -91,20 +92,22 @@ def test_split_sections_no_headings_is_weak_other() -> None:
 
 
 def _assert_parallel_specialist_order(recorded: list[tuple[str, str]]) -> None:
-    """Parse and claims finish first. The parallel group may overlap. Verify is after it."""
+    """Parse and claims finish first. Verify waits for the paper checks, not for reproduce."""
 
     def at(name: str, phase: str) -> int:
         return next(index for index, item in enumerate(recorded) if item == (name, phase))
 
     assert at("parse", "started") < at("parse", "finished") < at("claims", "started") < at("claims", "finished")
     claims_done = at("claims", "finished")
-    parallel = ("evidence", "citations", "numbers", "tables", "dataset", "reproduce")
-    for name in parallel:
-        assert claims_done < at(name, "started") < at(name, "finished")
-    group_done = max(at(name, "finished") for name in parallel)
-    assert group_done < at("verify", "started") < at("verify", "finished")
+    checks = ("evidence", "citations", "numbers", "tables", "dataset")
+    for name in checks:
+        assert claims_done < at(name, "started") < at(name, "finished") < at("verify", "started")
+    assert claims_done < at("reproduce", "started")
+    assert at("verify", "started") < at("verify", "finished")
     assert at("verify", "finished") < at("critic", "started") < at("critic", "finished")
-    assert at("critic", "finished") < at("stamp", "started") < at("stamp", "finished")
+    assert at("critic", "finished") < at("stamp", "started")
+    assert at("reproduce", "finished") < at("stamp", "started")
+    assert at("stamp", "started") < at("stamp", "finished")
     started = [name for name, phase in recorded if phase == "started"]
     finished = [name for name, phase in recorded if phase == "finished"]
     assert sorted(started) == sorted(SPECIALISTS)
@@ -490,3 +493,27 @@ def test_parallel_checks_overlap_and_keep_number_and_table_misses(
     assert table["computation"]["spec"]["computed"] == 4.5
     number_issue = next(issue for issue in result["issues"] if issue["issue_type"] == "number")
     assert "95.2" in number_issue["claim_text"] or "95.2" in number_issue["evidence_span"]
+
+
+def test_audit_records_stage_timings() -> None:
+    result = audit_paper(HUMAN, "job-time")
+    assert set(result["timings"]) == set(SPECIALISTS)
+    assert all(isinstance(value, float) and value >= 0 for value in result["timings"].values())
+
+
+def test_verify_starts_before_a_slow_reproduce_finishes(monkeypatch: pytest.MonkeyPatch) -> None:
+    marks: dict[str, float] = {}
+    release = threading.Event()
+
+    def slow(_claims: list, _sections: dict) -> list:
+        assert release.wait(timeout=5)
+        marks["repro_done"] = time.perf_counter()
+        return []
+
+    def judge(_claims: list, **_kwargs: object) -> None:
+        marks["verify"] = time.perf_counter()
+        release.set()
+
+    monkeypatch.setattr(paper_audit.claim_verify, "judge_with_lya", judge)
+    audit_paper(HUMAN, "job-slow-repro", repro=slow)
+    assert marks["verify"] < marks["repro_done"]

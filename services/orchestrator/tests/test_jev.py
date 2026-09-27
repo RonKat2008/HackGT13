@@ -194,3 +194,37 @@ def test_live_jev_decisions_api():
     assert 0.0 <= result["confidence"] <= 1.0
     assert isinstance(result["probs"], dict)
     assert result["not_run"] is False
+
+
+def test_shared_client_is_reused_with_a_twenty_second_timeout(monkeypatch, tmp_path) -> None:
+    import jev
+
+    jev._CLIENT = None
+    created: list[object] = []
+
+    class FakeResponse:
+        status_code = 200
+
+        def json(self) -> dict:
+            return SUCCESS_BODY
+
+    class FakeClient:
+        def __init__(self, *args: object, **kwargs: object) -> None:
+            created.append(kwargs.get("timeout"))
+
+        def post(self, *_args: object, **_kwargs: object) -> FakeResponse:
+            return FakeResponse()
+
+        def close(self) -> None:
+            return None
+
+    monkeypatch.setattr(jev.httpx, "Client", FakeClient)
+    try:
+        first = judge_claim("claim one about boiling water", "source one", api_key=FAKE_KEY)
+        second = judge_claim("claim two about freezing water", "source two", api_key=FAKE_KEY)
+    finally:
+        jev._CLIENT = None
+    assert first["label"] == "supported"
+    assert second["label"] == "supported"
+    assert len(created) == 1
+    assert created[0] == httpx.Timeout(20.0)

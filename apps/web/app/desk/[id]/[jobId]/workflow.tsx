@@ -264,9 +264,16 @@ export function Workflow({
           className="flex min-h-[50vh] min-w-0 flex-1 flex-col lg:min-h-0"
         >
           {unread && !passage?.text ? (
-            <div className="border-b border-[#e4dcd0] px-6 py-4">
-              {paper.abstract ? <p className="text-sm leading-6 text-[#1c1915]">{paper.abstract}</p> : null}
-              <p className="mt-2 text-sm leading-6 text-[#6b645c]">This paper has not been read yet.</p>
+            <div className="border-b border-[#e4dcd0] px-6 py-3">
+              {paper.abstract ? (
+                <details className="mb-2">
+                  <summary className="cursor-pointer text-xs text-[#1c1915] underline decoration-[#c4a15a] underline-offset-4">
+                    Abstract
+                  </summary>
+                  <p className="mt-2 text-sm leading-6 text-[#1c1915]">{paper.abstract}</p>
+                </details>
+              ) : null}
+              <p className="text-sm leading-6 text-[#6b645c]">This paper has not been read yet.</p>
             </div>
           ) : null}
           <div className="min-h-0 flex-1">

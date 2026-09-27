@@ -222,6 +222,11 @@ class Computation(StrictModel):
     steps: list[str] = Field(default_factory=list)
     log: str = ""
     formula: str = ""
+    dataset_resolution_ms: int = 0
+    dataset_load_ms: int = 0
+    execution_ms: int = 0
+    comparison_ms: int = 0
+    cache_hit: bool = False
 
 
 class DeskClaim(StrictModel):

@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import threading
 from datetime import datetime, timezone
 from typing import Any
 
@@ -11,6 +12,9 @@ import httpx
 DECISIONS_URL = "https://openrouter.ai/api/alpha/decisions"
 JEV_MODEL = "typesafe/jev-1.13"
 DEFAULT_CAP = 40
+_TIMEOUT = httpx.Timeout(20.0)
+_CLIENT_LOCK = threading.Lock()
+_CLIENT: httpx.Client | None = None
 
 QUESTIONS: dict[str, Any] = {
     "verdict": {
@@ -52,6 +56,14 @@ def cache_key(claim_text: str, source_text: str) -> str:
     return hashlib.sha256(body.encode()).hexdigest()
 
 
+def _shared_client() -> httpx.Client:
+    global _CLIENT
+    with _CLIENT_LOCK:
+        if _CLIENT is None:
+            _CLIENT = httpx.Client(timeout=_TIMEOUT)
+        return _CLIENT
+
+
 def judge_claim(
     claim_text: str,
     source_text: str,
@@ -73,11 +85,15 @@ def judge_claim(
         "Authorization": f"Bearer {key}",
         "Content-Type": "application/json",
     }
+    owns = transport is not None
+    client = httpx.Client(transport=transport, timeout=_TIMEOUT) if owns else _shared_client()
     try:
-        with httpx.Client(transport=transport) as client:
-            response = client.post(DECISIONS_URL, headers=headers, json=payload)
+        response = client.post(DECISIONS_URL, headers=headers, json=payload)
     except httpx.RequestError:
         return dict(_NOT_RUN)
+    finally:
+        if owns:
+            client.close()
 
     if response.status_code != 200:
         return dict(_NOT_RUN)
