@@ -65,10 +65,10 @@ Two programs.
 - **Screen.** Next.js 16 App Router at `apps/web`. Chair product is `/desk`. Auth is Supabase (`@supabase/ssr`). The browser never holds `XAI_API_KEY`, `OPENROUTER_API_KEY`, `KAGGLE_KEY`, or the Supabase service role. Next reads `apps/web/.env.local` only.
 - **Checker.** FastAPI at `services/orchestrator`, Python 3.12 venv. Local database is gitignored `services/orchestrator/playbook.sqlite`. Do not point `RUN_DB` at `/tmp` if lists should survive a restart. arXiv PDFs cache under `services/orchestrator/.arxiv-cache`.
 
-A chair signs in, creates a conference (a named list), pastes arXiv ids, and runs the queue. New-style ids matching `^\d{4}\.\d{4,5}$` are fetched from `export.arxiv.org`. Two local fixtures are not real papers:
+A chair signs in. The desk opens the one list. New-style ids matching `^\d{4}\.\d{4,5}$` are fetched from `export.arxiv.org`. Two local fixtures are not real papers:
 
-- `0000.00001` Hallucinated Metric Paper, Ada Example. Abstract claims 95.2% and cites Smith, 2099. Results say 61.0%. Only reference is Jones, 2018. Status `contradicted`. Two issues: citation, number. Both on page 1.
-- `0000.00002` Measured Metric Paper, Lin Example. Those checks pass.
+- `0000.00001` Reported Accuracy on a Public Benchmark, Ada Example. Abstract claims 95.2%. Results say 61.0%. Smith, 2099 is not in the references. Status `contradicted`. The stored issues are the citation and the number.
+- `0000.00002` Measured Accuracy on a Public Benchmark, Lin Example. 61.0% is in the abstract and the results. Status `passed`. No findings.
 
 ### The ten specialists, in order
 
@@ -116,9 +116,9 @@ These parts can be defended in a demo without pretending the harness is running:
 
 ## The honesty gap
 
-Jev and the catalog check are on the desk now. `jev.judge_claims` runs on the verify stage. Citation claims go through Crossref, OpenAlex, and Semantic Scholar. Parsers, MiniLM evidence, and catalog lookup still run before Jev.
+On the desk, a finished number contradiction, table formula, or rerun is stored before either model. Fine-tuned Lya judges the claim against the evidence rows. Jev runs only when Lya’s confidence is under 0.90. Citation claims still go through Crossref, OpenAlex, and Semantic Scholar. A catalog error stays `not_checked`.
 
-The gap that remains is table arithmetic and the bounded critic retry. The `tables` stage and the desk `critic()` return immediately; they are not connected. The playbook loop that would re-read a paper after a patch is still unwired. Do not claim the critic re-reads a claim.
+Table arithmetic is on the desk. The demo paper’s 7.8 point claim is contradicted because the table is 89.2 − 84.7 = 4.5. The playbook loop that would re-read a paper after a patch is still unwired. Do not claim the critic re-reads a claim.
 
 If a judge asks “where is the multi-agent recursive harness,” the accurate answer is: the specialist list is the agent trace; the recursion is built beside it and not connected. If they ask “where is Kaggle,” the accurate answer is: two private kernels already ran; the desk rerun is the restricted DSL in `repro.py`, not a GPU agent per paper. If they ask “did you catch the hallucinated citations in the Lancet and NeurIPS papers,” the accurate answer is: the desk can now ask outside catalogs whether a bibliography entry matches a real work, and still catches a number that does not survive the results.
 

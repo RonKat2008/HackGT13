@@ -6,7 +6,7 @@ HackGT 13. The product is ArxAudit. Landfall is out of scope. The old name Storm
 
 ## The idea
 
-A chair pastes arXiv ids. The desk reads each PDF and keeps a list of concrete problems: a citation that does not resolve, a number in the abstract that never appears in the results, a claim with no support in the methods or results, a named dataset that does not resolve, or a public table rerun that disagrees with the paper. The chair can ask the list a question, watch each paper move through the reading, and open the sentence that failed inside the original PDF.
+A chair signs in and the desk opens the one list. The desk reads each PDF and keeps a list of concrete problems: a citation that does not resolve, a number in the abstract that never appears in the results, a claim with no support in the methods or results, a named dataset that does not resolve, or a public table rerun that disagrees with the paper. The chair can ask the list a question, watch each paper move through the reading, and open the sentence that failed inside the original PDF.
 
 The point is a second pair of eyes on the claims a chair would otherwise have to check by hand. The output is a reason tied to a passage, not a score and not a verdict.
 
@@ -22,7 +22,7 @@ The point is a second pair of eyes on the claims a chair would otherwise have to
 
 **In.**
 
-- One chair, one list of papers, any new-style arXiv id, plus the two local fixtures used to demo a failed paper and a clean one.
+- One chair, one list, no conference picker. Any new-style arXiv id, plus the two local fixtures: `0000.00001` fails, `0000.00002` passes.
 - Ten reading stages, from opening the PDF to stamping the problems: parse, claims, evidence, citations, numbers, tables, dataset, reproduce, verify, critic, stamp.
 - A chat that stays on the list, and a summary that shows progress and a result.
 - The original PDF beside the finding, with the failed sentence marked.
@@ -68,14 +68,14 @@ The first five are in the desk now. The sixth is designed and not yet wired into
 
 **Shipped.**
 
-- Sign in, create a list, paste arXiv ids, store the title and abstract, delete a paper. PDF upload is available for a local file.
-- Run the queue. Stages in order: parse, claims, evidence, citations, numbers, tables, dataset, reproduce, verify, critic, stamp. Each writes one sentence. Table arithmetic and the critic retry are not filled in yet; those stages finish immediately.
-- Typed claims with pages. MiniLM `evidence.attach` retrieves supporting and contradicting passages. Catalogs (Crossref, OpenAlex, Semantic Scholar) run on citation claims. `jev.judge_claims` runs on the desk verify stage. The rerun is the restricted DSL in `repro.py`, not the paper’s own code.
+- Sign in, then the one list. Paste arXiv ids, store the title and abstract, delete a paper. PDF upload is available for a local file.
+- Run the queue. Stages in order: parse, claims, evidence, citations, numbers, tables, dataset, reproduce, verify, critic, stamp. Each writes one sentence. A number contradiction, a table formula, and a finished rerun are final. Lya judges the rest. Jev runs only when Lya is under 0.90.
+- Typed claims with pages. Evidence is the retrieved rows plus the sentences next to the claim. Catalogs (Crossref, OpenAlex, Semantic Scholar) run on citation claims. The rerun is the restricted DSL in `repro.py`, not the paper’s own code.
 - Chat with `@` mentions, a trace of what was chosen, and numbered markers into the PDF. A gold line connects the marker to the highlighted band.
 - Summary as its own tab: one bar per paper, the live stage in gold, the result at the end. Click a stage to open that part of the paper.
 - Duplicate findings collapse. A paper that stored the same support problem many times is shown once.
 - On-screen report with the PDF beside each finding, plus a markdown report and a zip of judged papers. Chat history is stored on the conference so a refresh keeps the thread.
-- Fixture pair: `0000.00001` fails, `0000.00002` is the clean contrast, plus the demo paper `0000.00003`.
+- Fixture pair: `0000.00001` fails, `0000.00002` is Verified, plus the demo paper Adaptive Reasoning Systems. The clicks are in `docs/demo-script.md`.
 
 **Designed, not the chair’s main path yet.**
 
@@ -86,7 +86,7 @@ The first five are in the desk now. The sixth is designed and not yet wired into
 
 ## Technical depth
 
-**Read path.** A new-style arXiv id is downloaded, cached, and checked for a PDF header. Text is split into sections. Stages run in order: parse, claims, evidence, citations, numbers, tables, dataset, reproduce, verify, critic, stamp. Table arithmetic and the critic retry are not filled in. Parsers, MiniLM evidence, and catalog lookup run before Jev. Catalogs (Crossref, OpenAlex, Semantic Scholar) run on citation claims. `jev.judge_claims` runs on the desk verify stage. Grok writes prose for the chat. The browser never trusts a page number from the model. The page comes from searching the PDF. The highlight is the same string found in the rendered text layer. Citation, numeric, and evidence work for each claim runs in a pool of four, and the stage events stay in that order.
+**Read path.** A new-style arXiv id is downloaded, cached, and checked for a PDF header. Text is split into sections. Stages run in order: parse, claims, evidence, citations, numbers, tables, dataset, reproduce, verify, critic, stamp. A number contradiction, a table formula, and a finished rerun stay final. Lya judges what remains. Jev runs only when Lya is under 0.90. Catalogs (Crossref, OpenAlex, Semantic Scholar) run on citation claims. Grok writes prose for the chat. The browser never trusts a page number from the model. The page comes from searching the PDF. The highlight is the same string found in the rendered text layer. Citation, numeric, and evidence work for each claim runs in a pool of four, and the stage events stay in that order.
 
 **What counts as an issue.** Unresolved citation, contradicted number or claim, unsupported claim, dataset problem, or a failed rerun. Likeness does not open an issue. If the abstract-corpus probe’s holdout AUC is under 0.60, likeness is hidden. The probe that was run sits above that line. The desk still does not turn likeness into a finding.
 

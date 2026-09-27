@@ -25,10 +25,10 @@ todos:
     status: pending
   - id: chunk-regress
     content: "Chunk 6: regress the other two fixture papers"
-    status: pending
+    status: completed
   - id: chunk-script
     content: "Chunk 7: demo script and the docs that match it"
-    status: pending
+    status: completed
 isProject: false
 ---
 
@@ -36,7 +36,7 @@ isProject: false
 
 Source brief: `/Users/sohaibqurashi/Documents/ArxAudit_Complete_Product_Technical_Build_Brief.md`. Current state: [docs/technical-state.md](docs/technical-state.md).
 
-Deadline: Sep 27, 12:00pm EDT. One person. Do the chunks in order. Do not commit until the user says so.
+Deadline: Sep 27, 12:00pm EDT. One person. Do the chunks in order. After a chunk passes, commit it and push.
 
 ## Work
 
