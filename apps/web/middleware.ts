@@ -19,8 +19,10 @@ export async function middleware(request: NextRequest) {
   const path = request.nextUrl.pathname;
 
   if (!url || !key) {
-    if (path.startsWith("/desk")) {
-      return NextResponse.redirect(new URL("/login", request.url));
+    if (path.startsWith("/desk") || path.startsWith("/author")) {
+      const login = new URL("/login", request.url);
+      if (path.startsWith("/author")) login.searchParams.set("next", "/author");
+      return NextResponse.redirect(login);
     }
     return supabaseResponse;
   }
@@ -46,8 +48,10 @@ export async function middleware(request: NextRequest) {
   const { data } = await supabase.auth.getClaims();
   const signedIn = Boolean(data?.claims?.sub);
 
-  if (path.startsWith("/desk") && !signedIn) {
-    return carry(supabaseResponse, NextResponse.redirect(new URL("/login", request.url)));
+  if ((path.startsWith("/desk") || path.startsWith("/author")) && !signedIn) {
+    const login = new URL("/login", request.url);
+    if (path.startsWith("/author")) login.searchParams.set("next", "/author");
+    return carry(supabaseResponse, NextResponse.redirect(login));
   }
   if (path === "/signup") {
     return carry(
@@ -56,7 +60,9 @@ export async function middleware(request: NextRequest) {
     );
   }
   if (path === "/login" && signedIn) {
-    return carry(supabaseResponse, NextResponse.redirect(new URL("/desk", request.url)));
+    const next = request.nextUrl.searchParams.get("next");
+    const dest = next === "/author" ? "/author" : "/desk";
+    return carry(supabaseResponse, NextResponse.redirect(new URL(dest, request.url)));
   }
   return supabaseResponse;
 }

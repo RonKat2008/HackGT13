@@ -4,13 +4,35 @@ import { headers } from "next/headers";
 import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 
+function authorNext(formData: FormData): boolean {
+  const fromForm = String(formData.get("next") ?? "").trim();
+  if (fromForm === "/author") return true;
+  return false;
+}
+
+async function nextIsAuthor(formData: FormData): Promise<boolean> {
+  if (authorNext(formData)) return true;
+  const referer = (await headers()).get("referer");
+  if (!referer) return false;
+  try {
+    return new URL(referer).searchParams.get("next") === "/author";
+  } catch {
+    return false;
+  }
+}
+
 export async function signIn(formData: FormData) {
   const email = String(formData.get("email") ?? "").trim();
   const password = String(formData.get("password") ?? "");
   const supabase = await createClient();
   const { error } = await supabase.auth.signInWithPassword({ email, password });
-  if (error) redirect(`/login?error=${encodeURIComponent(error.message)}`);
-  redirect("/desk");
+  const toAuthor = await nextIsAuthor(formData);
+  if (error) {
+    const q = new URLSearchParams({ error: error.message });
+    if (toAuthor) q.set("next", "/author");
+    redirect(`/login?${q.toString()}`);
+  }
+  redirect(toAuthor ? "/author" : "/desk");
 }
 
 export async function signUp(formData: FormData) {

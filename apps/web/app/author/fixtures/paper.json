@@ -1,0 +1,7 @@
+{
+  "title": "Attention Is Not All You Need: Spurious Correlations in Citation Graphs",
+  "arxiv_id": "2503.18421",
+  "status": "contradicted",
+  "finding_count": 3,
+  "issue_reason": "Abstract reports 94.2% F1 on the holdout split; Table 3 lists 81.6% for the same split."
+}

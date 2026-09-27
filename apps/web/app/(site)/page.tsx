@@ -52,6 +52,9 @@ export default async function HomePage() {
                   Sign in
                 </Link>
               )}
+              <Link href="/author" className="text-sm underline decoration-[#c4a15a] underline-offset-4">
+                For authors
+              </Link>
               <Link href="#how" className="text-sm underline decoration-[#c4a15a] underline-offset-4">
                 Watch how it works
               </Link>
