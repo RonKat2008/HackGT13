@@ -330,7 +330,15 @@ def _multipart_file_bytes(body: bytes, content_type: str) -> bytes | None:
         boundary = boundary[1:-1]
     delimiter = b"--" + boundary.encode()
     for chunk in body.split(delimiter):
-        if b'name="file"' not in chunk and b"name=file;" not in chunk and b"name=file\r\n" not in chunk:
+        has_file = (
+            b'name="file"' in chunk
+            or b"name=file;" in chunk
+            or b"name=file\r\n" in chunk
+            or b'name="pdf"' in chunk
+            or b"name=pdf;" in chunk
+            or b"name=pdf\r\n" in chunk
+        )
+        if not has_file:
             continue
         header_end = chunk.find(b"\r\n\r\n")
         if header_end < 0:
@@ -485,10 +493,20 @@ class AuthorPaperBody(BaseModel):
 
 
 @app.post("/author/papers")
-def author_add(body: AuthorPaperBody) -> dict:
+async def author_add(request: Request, owner: str | None = Query(default=None)) -> dict:
     from author import add_author_paper
 
     try:
+        content_type = request.headers.get("content-type", "")
+        if "multipart/form-data" in content_type.lower():
+            data = _multipart_file_bytes(await request.body(), content_type)
+            if data is None:
+                raise BatchError(400, "paste an arXiv id or upload a PDF")
+            shelf_owner = (owner or "").strip()
+            if not shelf_owner:
+                raise BatchError(400, "owner is required")
+            return add_author_paper(shelf_owner, pdf=data)
+        body = AuthorPaperBody.model_validate(await request.json())
         return add_author_paper(body.owner, arxiv_id=body.arxiv_id)
     except BatchError as exc:
         _batch_http(exc)

@@ -90,6 +90,20 @@ def test_upload_starts_on_the_same_shelf(tmp_path, monkeypatch) -> None:
     assert papers[0]["job_id"] == added["job_id"]
 
 
+def test_multipart_pdf_upload_starts_a_paper(tmp_path, monkeypatch) -> None:
+    client = _client(tmp_path, monkeypatch)
+    with (FIXTURES / "human.pdf").open("rb") as handle:
+        response = client.post(
+            "/author/papers",
+            params={"owner": "author-upload"},
+            files={"pdf": ("human.pdf", handle, "application/pdf")},
+        )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["job_id"]
+    assert body["status"] in {"queued", "running", "passed", "contradicted"}
+
+
 _BANNED = ("fake", "fraudulent", "fabricated", "ai-written")
 _FIRST_MARK = "Smith, 2099"
 _SECOND_MARK = "Lee, 2020"
