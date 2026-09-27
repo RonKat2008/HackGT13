@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import type { Claim, Issue, Paper, PaperProgress } from "@/lib/desk";
 import { isFinding } from "@/lib/verdict";
 import progressFixture from "./fixtures/progress.json";
-import { FindingCard, needsNumberPreview, previewNumberClaim, reviewKind, reviewResult } from "./finding";
+import { FindingCard, reviewKind, reviewResult } from "./finding";
 
 export const ORDER = [
   "parse",
@@ -119,9 +119,7 @@ function hasVerdict(claim: Claim): boolean {
 
 /** Live claims for the rail. Never stored — a later poll can move a card. */
 export function railClaims(paper: Paper): Claim[] {
-  const claims = paper.claims ?? [];
-  if (!needsNumberPreview(paper)) return claims;
-  return [...claims, previewNumberClaim(paper.job_id)];
+  return paper.claims ?? [];
 }
 
 function paperForRail(paper: Paper, focus: string): Paper {

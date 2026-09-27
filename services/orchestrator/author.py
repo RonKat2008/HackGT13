@@ -9,6 +9,7 @@ from uuid import uuid4
 
 import voice
 from batches import BatchError, _db, _now
+from models import is_finding
 from desk import (
     DEMO_CONFERENCE_ID,
     _ensure_desk,
@@ -251,6 +252,16 @@ def _store_exchange(
         conn.commit()
 
 
+def clear_author_messages(job_id: str) -> dict[str, int]:
+    if not _on_shelf(job_id):
+        raise BatchError(404, "paper not found")
+    with _db() as conn:
+        _tables(conn)
+        cursor = conn.execute("DELETE FROM author_messages WHERE job_id = ?", (job_id,))
+        conn.commit()
+        return {"cleared": int(cursor.rowcount)}
+
+
 def list_author_messages(job_id: str) -> dict[str, list[dict[str, Any]]]:
     if not _on_shelf(job_id):
         raise BatchError(404, "paper not found")
@@ -277,6 +288,62 @@ def list_author_messages(job_id: str) -> dict[str, list[dict[str, Any]]]:
                 message["trace"] = trace
         messages.append(message)
     return {"messages": messages}
+
+
+def _finding_kind(claim: dict[str, Any]) -> str:
+    kind = str(claim.get("claim_type") or "")
+    if kind == "citation":
+        return "citation"
+    if kind == "dataset":
+        return "dataset"
+    if kind == "semantic":
+        return "semantic"
+    if kind == "numerical_comparison" and voice.formula_of(claim):
+        return "table"
+    if kind in {"numerical", "numerical_comparison"}:
+        return "number"
+    computation = claim.get("computation") or {}
+    if isinstance(computation, dict) and computation.get("status") == "could_not_reproduce":
+        return "test"
+    return "semantic"
+
+
+def _finding_reason(claim: dict[str, Any]) -> str:
+    reason = " ".join(str(claim.get("reason") or "").split())
+    if reason:
+        return reason
+    text = " ".join(str(claim.get("text") or "").split())
+    return text[:180] or "This check needs a person."
+
+
+def _claim_findings(paper: dict[str, Any]) -> list[dict[str, Any]]:
+    return [claim for claim in paper.get("claims") or [] if isinstance(claim, dict) and is_finding(claim)]
+
+
+def _finding_quotes(paper: dict[str, Any]) -> list[dict[str, Any]]:
+    title = paper.get("title") or paper.get("arxiv_id") or "Paper"
+    quotes: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for claim in _claim_findings(paper):
+        text = " ".join(str(claim.get("text") or "").split())
+        key = text.lower()
+        if len(text) < 4 or key in seen:
+            continue
+        seen.add(key)
+        page = claim.get("page")
+        quotes.append(
+            {
+                "quote_id": f"q{len(quotes) + 1}",
+                "job_id": paper.get("job_id") or "",
+                "arxiv_id": paper.get("arxiv_id") or "",
+                "title": title,
+                "page": page if isinstance(page, int) else None,
+                "text": text,
+                "issue_type": _finding_kind(claim),
+                "reason": _finding_reason(claim),
+            }
+        )
+    return quotes
 
 
 def _paper_block(paper: dict[str, Any]) -> str:
@@ -348,7 +415,12 @@ def _author_local(paper: dict[str, Any]) -> str:
     if not paper.get("paper_text") and not issues:
         return f"{label} ({ident}) is still queued."
     if not issues:
-        return f"{label} ({ident}) has nothing to report."
+        findings = _finding_quotes(paper)
+        if not findings:
+            return f"{label} ({ident}) has nothing to report."
+        return "\n".join(
+            f"{label} ({ident}) {item['issue_type']}: {item['reason']}" for item in findings
+        )
     lines = [
         f"{label} ({ident}) {issue['issue_type']}: {issue['reason']}"
         for issue in issues
@@ -378,6 +450,18 @@ def ask_author_paper(job_id: str, question: str) -> dict[str, Any]:
         asked, [paper], grok, local, str(paper.get("title") or paper["arxiv_id"])
     )
     trace, quotes = _reading([paper], answer)
+    if not any(item.get("issue_type") for item in quotes):
+        quotes = _finding_quotes(paper)
+        for quote in quotes:
+            trace.append(
+                {
+                    "id": quote["quote_id"],
+                    "kind": "quote",
+                    "label": quote["issue_type"],
+                    "detail": quote["reason"],
+                    "quote_id": quote["quote_id"],
+                }
+            )
     _store_exchange(job_id, asked, answer, quotes, trace)
     return {
         "answer": answer,

@@ -74,6 +74,8 @@ export function PdfView({
         canvas.style.height = `${viewport.height}px`;
         const textLayerDiv = document.createElement("div");
         textLayerDiv.className = "textLayer";
+        pageEl.style.setProperty("--scale-factor", String(viewport.scale));
+        textLayerDiv.style.setProperty("--scale-factor", String(viewport.scale));
         pageEl.append(canvas, textLayerDiv);
         host!.appendChild(pageEl);
         await pdfPage.render({
@@ -170,7 +172,7 @@ function notePage(
 }
 
 function scrollToQuote(root: HTMLElement, page: number | null, quote: string): void {
-  const needle = quote.replace(/\s+/g, "").toLowerCase().slice(0, 24);
+  const needle = compactQuote(quote).slice(0, 24);
   const bands = [...root.querySelectorAll<HTMLElement>(".pdf-band")];
   const onPage = page ? root.querySelector<HTMLElement>(`[data-page="${page}"]`) : null;
   const match =
@@ -184,15 +186,13 @@ function scrollToQuote(root: HTMLElement, page: number | null, quote: string): v
   match.scrollIntoView({ block: "center", behavior: reduce ? "auto" : "smooth" });
 }
 
+function compactQuote(text: string): string {
+  return text.replace(/[\s\u00ad-]+/g, "").toLowerCase();
+}
+
 function markQuote(root: HTMLElement, page: number | null, quote: string, role: string): boolean {
-  const full = quote.replace(/\s+/g, "").toLowerCase();
-  const words = quote
-    .replace(/\s+/g, " ")
-    .trim()
-    .split(" ")
-    .slice(0, 8)
-    .join("")
-    .toLowerCase();
+  const full = compactQuote(quote);
+  const words = compactQuote(quote.replace(/\s+/g, " ").trim().split(" ").slice(0, 8).join(" "));
   const number = quote.match(/\d+\.\d+/)?.[0] ?? "";
   const needles = [full.slice(0, 320), full.slice(0, 80), words, number].filter(
     (item, index, all) => item.length >= 4 && all.indexOf(item) === index,
@@ -223,26 +223,28 @@ function placeOnPage(pageEl: HTMLElement, needle: string, role: string, span: nu
     if (!textNode) return;
     const raw = textNode.textContent ?? "";
     for (let index = 0; index < raw.length; index += 1) {
-      if (/\s/.test(raw[index] ?? "")) continue;
+      const glyph = raw[index] ?? "";
+      if (/\s/.test(glyph) || glyph === "-" || glyph === "\u00ad") continue;
       nodes.push({ node: textNode, offset: index });
-      flat += (raw[index] ?? "").toLowerCase();
+      flat += glyph.toLowerCase();
     }
   });
   const at = flat.indexOf(needle);
   if (at < 0 || !nodes[at]) return false;
   const end = Math.min(nodes.length, at + Math.min(span, needle.length));
   const pageRect = pageEl.getBoundingClientRect();
-  const lines = underlineLines(nodes, at, end);
+  const lines = markerLines(nodes, at, end);
   if (!lines.length) return false;
   for (const line of lines) {
     const mark = document.createElement("div");
     mark.className = role === "contradicts" ? "pdf-band pdf-band-contradicts" : "pdf-band";
     mark.dataset.role = role;
     mark.dataset.quote = needle.slice(0, 24);
+    const height = Math.max(line.bottom - line.top - 2, 6);
     mark.style.left = `${line.left - pageRect.left}px`;
     mark.style.width = `${line.right - line.left}px`;
-    mark.style.top = `${line.bottom - pageRect.top}px`;
-    mark.style.height = "1.5px";
+    mark.style.top = `${line.top - pageRect.top + 1}px`;
+    mark.style.height = `${height}px`;
     pageEl.appendChild(mark);
   }
   return true;
@@ -253,13 +255,11 @@ type Box = { left: number; right: number; top: number; bottom: number };
 
 let measureCtx: CanvasRenderingContext2D | null = null;
 
-function underlineLines(nodes: Glyph[], start: number, end: number): { left: number; right: number; bottom: number }[] {
+function markerLines(nodes: Glyph[], start: number, end: number): Box[] {
   const boxes = selectionBoxes(nodes, start, end);
   const lines: Box[] = [];
   for (const box of boxes) {
-    const line = lines.find(
-      (item) => sameInkLine(item, box) && box.left <= item.right + Math.max(16, (box.bottom - box.top) * 1.25),
-    );
+    const line = lines.find((item) => canJoin(item, box));
     if (!line) {
       lines.push({ ...box });
       continue;
@@ -269,15 +269,19 @@ function underlineLines(nodes: Glyph[], start: number, end: number): { left: num
     line.top = Math.min(line.top, box.top);
     line.bottom = Math.max(line.bottom, box.bottom);
   }
-  return lines.map((line) => ({
-    left: line.left,
-    right: line.right,
-    bottom: line.bottom - underlineLift(line),
-  }));
+  return lines;
 }
 
-function underlineLift(line: Box): number {
-  return Math.min(4, Math.max(2, (line.bottom - line.top) * 0.22));
+function canJoin(a: Box, b: Box): boolean {
+  if (!sameInkLine(a, b)) return false;
+  const size = Math.min(a.bottom - a.top, b.bottom - b.top);
+  return gapBetween(a, b) <= Math.max(6, size * 0.55);
+}
+
+function gapBetween(a: Box, b: Box): number {
+  if (b.left >= a.right) return b.left - a.right;
+  if (a.left >= b.right) return a.left - b.right;
+  return 0;
 }
 
 function selectionBoxes(nodes: Glyph[], start: number, end: number): Box[] {
@@ -295,45 +299,65 @@ function selectionBoxes(nodes: Glyph[], start: number, end: number): Box[] {
     }
     groups.push({ span, node, raw, from: offset, to: offset + 1 });
   }
-  return groups.flatMap((group) => {
-    const box = boxForSlice(group.span, group.node, group.raw, group.from, group.to);
+  return groups.flatMap((group) => wordSlices(group.raw, group.from, group.to).flatMap((slice) => {
+    const box = boxForSlice(group.span, group.node, group.raw, slice.from, slice.to);
     return box ? [box] : [];
-  });
+  }));
+}
+
+function wordSlices(raw: string, from: number, to: number): { from: number; to: number }[] {
+  const slices: { from: number; to: number }[] = [];
+  let cursor = from;
+  while (cursor < to) {
+    while (cursor < to && /\s/.test(raw[cursor] ?? "")) cursor += 1;
+    if (cursor >= to) break;
+    let end = cursor;
+    while (end < to && !/\s/.test(raw[end] ?? "")) end += 1;
+    slices.push({ from: cursor, to: end });
+    cursor = end;
+  }
+  return slices;
 }
 
 function boxForSlice(span: HTMLElement, node: Text, raw: string, from: number, to: number): Box | null {
   const rect = span.getBoundingClientRect();
   if (rect.width < 0.5 || rect.height < 0.5 || to <= from) return null;
-  if (from <= 0 && to >= raw.length) {
-    return { left: rect.left, right: rect.right, top: rect.top, bottom: rect.bottom };
-  }
+  const slice = raw.slice(from, to);
+  const ink = inkSpan(rect, span, raw, from, to);
   const range = document.createRange();
   range.setStart(node, from);
   range.setEnd(node, Math.min(to, node.length));
   const hit = range.getBoundingClientRect();
   const inside = hit.left >= rect.left - 1 && hit.right <= rect.right + 1;
-  const fraction = (to - from) / Math.max(raw.length, 1);
-  const browserMissed = hit.width > rect.width * 0.97 && fraction < 0.8;
+  const fraction = slice.replace(/\s/g, "").length / Math.max(raw.replace(/\s/g, "").length, 1);
+  const browserMissed = hit.width > Math.max(ink, 0.5) * 1.08 && fraction < 0.92;
   if (hit.width >= 0.5 && inside && !browserMissed) {
+    const stretched = ink > hit.width * 0.6 && hit.width > ink * 1.2;
     return {
       left: Math.max(hit.left, rect.left),
-      right: Math.min(hit.right, rect.right),
-      top: rect.top,
-      bottom: rect.bottom,
+      right: Math.min(stretched ? hit.left + ink : hit.right, rect.right),
+      top: hit.top,
+      bottom: hit.bottom,
     };
   }
+  if (ink < 0.5) return null;
   const total = textWidth(span, raw);
   const startW = textWidth(span, raw.slice(0, from));
-  const endW = textWidth(span, raw.slice(0, to));
   const left = rect.left + (total > 0 ? (rect.width * startW) / total : (rect.width * from) / Math.max(raw.length, 1));
-  const right = rect.left + (total > 0 ? (rect.width * endW) / total : (rect.width * to) / Math.max(raw.length, 1));
-  if (right - left < 0.5) return null;
   return {
     left: Math.max(left, rect.left),
-    right: Math.min(right, rect.right),
+    right: Math.min(left + ink, rect.right),
     top: rect.top,
     bottom: rect.bottom,
   };
+}
+
+function inkSpan(rect: DOMRect, span: HTMLElement, raw: string, from: number, to: number): number {
+  const slice = raw.slice(from, to).replace(/\s+$/g, "").replace(/^\s+/g, "");
+  const total = textWidth(span, raw);
+  const ink = textWidth(span, slice);
+  if (total > 0 && ink > 0) return (rect.width * ink) / total;
+  return rect.width * (slice.length / Math.max(raw.length, 1));
 }
 
 function textWidth(span: HTMLElement, text: string): number {

@@ -13,3 +13,15 @@ export async function GET(
   const history = await deskFetch(`/desk/conferences/${id}/messages`);
   return NextResponse.json(history);
 }
+
+export async function DELETE(
+  _request: Request,
+  context: { params: Promise<{ id: string }> },
+) {
+  if (!(await deskUser())) {
+    return NextResponse.json({ error: "sign in" }, { status: 401 });
+  }
+  const { id } = await context.params;
+  const result = await deskFetch(`/desk/conferences/${id}/messages`, { method: "DELETE" });
+  return NextResponse.json(result);
+}

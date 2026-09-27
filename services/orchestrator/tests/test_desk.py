@@ -193,6 +193,51 @@ def test_ask_uses_the_mentioned_paper(tmp_path, monkeypatch):
     assert any(step["kind"] == "quote" for step in messages[1]["trace"])
 
 
+def test_reset_clears_one_conference_thread(tmp_path, monkeypatch):
+    client = _client(tmp_path, monkeypatch)
+    first = _conference(client)
+    second = _conference(client)
+    asked = client.post(
+        f"/desk/conferences/{first}/ask",
+        json={"question": "What failed on @9999.99999?", "mentions": ["9999.99999"]},
+    )
+    other = client.post(
+        f"/desk/conferences/{second}/ask",
+        json={"question": "What failed on @9999.99998?", "mentions": ["9999.99998"]},
+    )
+    assert asked.status_code == 200
+    assert other.status_code == 200
+
+    cleared = client.delete(f"/desk/conferences/{first}/messages")
+    assert cleared.status_code == 200
+    assert cleared.json()["cleared"] == 2
+    assert client.get(f"/desk/conferences/{first}/messages").json()["messages"] == []
+    kept = client.get(f"/desk/conferences/{second}/messages").json()["messages"]
+    assert kept[0]["text"] == "What failed on @9999.99998?"
+    missing = client.delete("/desk/conferences/not-a-list/messages")
+    assert missing.status_code == 404
+
+
+def test_unnamed_question_opens_every_paper(tmp_path, monkeypatch):
+    monkeypatch.delenv("XAI_API_KEY", raising=False)
+    client = _client(tmp_path, monkeypatch)
+    conference_id = _conference(client)
+    lines = [f"2401.0000{index}" for index in range(7)]
+    added = client.post(
+        f"/desk/conferences/{conference_id}/submissions",
+        json={"lines": lines},
+    )
+    assert added.status_code == 200
+    assert added.json()["added"] == 7
+
+    response = client.post(
+        f"/desk/conferences/{conference_id}/ask",
+        json={"question": "What is the summary of the findings?", "mentions": []},
+    )
+    assert response.status_code == 200
+    assert response.json()["papers"] == lines
+
+
 def test_signup_conferences_stay_on_that_account(tmp_path, monkeypatch):
     client = _client(tmp_path, monkeypatch)
     first = client.post(

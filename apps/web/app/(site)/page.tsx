@@ -72,9 +72,6 @@ export default async function HomePage() {
                   Sign in
                 </Link>
               ) : null}
-              <Link href="#how" className="text-sm underline decoration-[#c4a15a] underline-offset-4">
-                Watch how it works
-              </Link>
             </div>
           </div>
           <HeroStage />
@@ -113,18 +110,6 @@ export default async function HomePage() {
           <p className="mt-6 text-sm leading-7 text-[#6b645c]">A likeness score is not a verdict.</p>
         </div>
       </section>
-
-      <footer className="border-t border-[#e4dcd0]">
-        <div className="mx-auto flex max-w-6xl flex-wrap items-end justify-between gap-6 px-6 py-12">
-          <div>
-            <p className="font-[family-name:var(--desk-serif)] text-3xl">PreSearch</p>
-            <p className="mt-2 text-sm text-[#6b645c]">Open the desk when the list is yours.</p>
-          </div>
-          <Link href="/signup" className="rounded-full bg-[#1c1915] px-5 py-3 text-sm text-[#f4f0e6]">
-            Create an account
-          </Link>
-        </div>
-      </footer>
     </main>
   );
 }

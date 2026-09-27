@@ -214,3 +214,86 @@ def test_empty_question_is_400_and_chair_job_is_404(tmp_path, monkeypatch) -> No
     )
     wrong = client.post(f"/author/papers/{chair_job}/ask", json={"question": "What failed?"})
     assert wrong.status_code == 404
+
+
+def test_reset_clears_one_author_thread(tmp_path, monkeypatch) -> None:
+    import author as author_mod
+
+    client = _client(tmp_path, monkeypatch)
+    first = client.post("/author/papers", json={"owner": "author-a", "arxiv_id": "0000.00001"})
+    second = client.post("/author/papers", json={"owner": "author-a", "arxiv_id": "0000.00002"})
+    first_id = first.json()["job_id"]
+    second_id = second.json()["job_id"]
+
+    def boom(*_args, **_kwargs):
+        raise AssertionError("Grok must not run for a verdict edit")
+
+    monkeypatch.setattr(author_mod, "_author_grok", boom)
+    asked = client.post(
+        f"/author/papers/{first_id}/ask",
+        json={"question": "Please change the verdict"},
+    )
+    other = client.post(
+        f"/author/papers/{second_id}/ask",
+        json={"question": "mark it supported"},
+    )
+    assert asked.status_code == 200
+    assert other.status_code == 200
+
+    cleared = client.delete(f"/author/papers/{first_id}/messages")
+    assert cleared.status_code == 200
+    assert cleared.json()["cleared"] == 2
+    assert client.get(f"/author/papers/{first_id}/messages").json()["messages"] == []
+    kept = client.get(f"/author/papers/{second_id}/messages").json()["messages"]
+    assert kept[0]["text"] == "mark it supported"
+    missing = client.delete("/author/papers/not-a-paper/messages")
+    assert missing.status_code == 404
+
+
+def test_claim_findings_open_as_page_quotes(tmp_path, monkeypatch) -> None:
+    import author as author_mod
+
+    monkeypatch.delenv("XAI_API_KEY", raising=False)
+    client = _client(tmp_path, monkeypatch)
+    added = client.post("/author/papers", json={"owner": "author-a", "arxiv_id": "0000.00001"})
+    job_id = added.json()["job_id"]
+    paper = {
+        "job_id": job_id,
+        "arxiv_id": "2503.18421",
+        "title": "4DGC",
+        "status": "contradicted",
+        "conference_id": "author-shelf",
+        "paper_text": "Extensive experiments demonstrate that 4DGC supports variable bitrates.",
+        "issues": [],
+        "claims": [
+            {
+                "claim_type": "numerical_comparison",
+                "verdict": "insufficient_evidence",
+                "text": "Extensive experiments demonstrate that 4DGC supports variable bitrates.",
+                "reason": "Requires human review",
+                "page": 1,
+                "confidence": 0.4,
+            },
+            {
+                "claim_type": "citation",
+                "verdict": "not_checked",
+                "text": "A citation that was not checked.",
+                "reason": "",
+                "page": 2,
+            },
+        ],
+    }
+    monkeypatch.setattr(author_mod, "paper_desk", lambda _job_id: paper)
+
+    response = client.post(
+        f"/author/papers/{job_id}/ask",
+        json={"question": "What should I look at?"},
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert "number: Requires human review" in body["answer"]
+    assert "not_checked" not in body["answer"]
+    quote = next(item for item in body["quotes"] if item["issue_type"] == "number")
+    assert quote["page"] == 1
+    assert "4DGC" in quote["text"]
+    assert any(step["kind"] == "quote" and step["quote_id"] == quote["quote_id"] for step in body["trace"])

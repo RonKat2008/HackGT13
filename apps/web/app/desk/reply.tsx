@@ -161,7 +161,7 @@ function buildGroups(
       lines.find((line) => line.verdict)?.verdict ||
       statusLabel(paper);
     const issueQuotes = quotes.filter((quote) => quote.arxiv_id === id && quote.issue_type);
-    let findings = issueQuotes.map(quoteFinding);
+    let findings = dedupeFindings(issueQuotes.map(quoteFinding));
     if (findings.length === 0) {
       findings = lines
         .filter((line) => line.issueType)
@@ -191,6 +191,26 @@ function sentence(text: string): string {
   const trimmed = text.replace(/\s+/g, " ").trim();
   if (!trimmed) return "";
   return /[.!?]$/.test(trimmed) ? trimmed : `${trimmed}.`;
+}
+
+function shownReason(finding: Finding): string {
+  const reason = finding.reason.replace(/\s+/g, " ").trim();
+  const text = finding.text.replace(/\s+/g, " ").trim();
+  if (text && /^requires human review\.?$/i.test(reason)) return sentence(text);
+  return sentence(reason || text || "This check failed");
+}
+
+function dedupeFindings(findings: Finding[]): Finding[] {
+  const seen = new Set<string>();
+  const kept: Finding[] = [];
+  for (const finding of findings) {
+    const basis = (finding.text || finding.reason).replace(/\s+/g, " ").trim().toLowerCase();
+    const key = `${finding.issueType}|${basis}`;
+    if (!basis || seen.has(key)) continue;
+    seen.add(key);
+    kept.push(finding);
+  }
+  return kept;
 }
 
 function explainIssue(kind: string): string {
@@ -451,7 +471,8 @@ function Brief({
       {groups.map((group) => {
         const findings = issueFindings(group);
         const activePaper = Boolean(group.paper && group.paper.job_id === activeJobId);
-        const canOpen = Boolean(group.paper || pageAction?.job_id === group.paper?.job_id);
+        const paperJobId = group.paper?.job_id;
+        const canOpen = Boolean(group.paper || (pageAction?.job_id != null && pageAction.job_id === paperJobId));
         return (
           <section key={group.key}>
             {titles ? (
@@ -485,7 +506,7 @@ function Brief({
                 <h4 className="text-sm text-[#1c1915]">{kindHeading(bucket.kind, bucket.items.length)}</h4>
                 <ul className="mt-2 flex list-disc flex-col gap-3 pl-5 text-sm leading-7 text-[#1c1915]">
                   {bucket.items.map((finding) => {
-                    const reason = sentence(finding.reason || finding.text || "This check failed");
+                    const reason = shownReason(finding);
                     const active = activeQuoteId === finding.id;
                     const note = explainIssue(finding.issueType);
                     return (

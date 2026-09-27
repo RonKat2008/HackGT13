@@ -24,6 +24,13 @@ import repro
 import shelf
 from dataclasses import asdict
 
+from imagine import (
+    desk_summary,
+    generate_clip,
+    motion_prompt,
+    parse_imagine,
+    render_still,
+)
 from models import (
     ConferenceProgress,
     DeskClaim,
@@ -44,6 +51,8 @@ from batches import (
     arxiv_listings,
     resolve_paper,
 )
+
+_IMAGINE_LABEL = "Generated from this desk. Not a finding."
 
 _ARXIV_RE = re.compile(r"(\d{4}\.\d{4,5}|0000\.0000\d)")
 # One chair. This is the conference already used for the demo.
@@ -144,10 +153,13 @@ def _ensure_desk(conn: Any) -> None:
             trace_json TEXT NOT NULL,
             quotes_json TEXT NOT NULL,
             papers_json TEXT NOT NULL,
+            imagine_json TEXT,
             created_at TEXT NOT NULL
         )
         """
     )
+    if "imagine_json" not in _columns(conn, "desk_messages"):
+        conn.execute("ALTER TABLE desk_messages ADD COLUMN imagine_json TEXT")
     _ensure_one_list(conn)
     conn.commit()
 
@@ -1781,6 +1793,33 @@ def ask_conference(
         raise BatchError(400, "question is empty")
     desk = conference_desk(conference_id)
     papers = desk["papers"]
+    wish = parse_imagine(asked)
+    if wish is not None:
+        summary = desk_summary(desk["name"], papers)
+        still = render_still(desk["name"], summary)
+        url = generate_clip(still, motion_prompt(summary, wish))
+        if url:
+            answer = f"{summary}\n\nThe clip is ready."
+        else:
+            answer = f"{summary}\n\nThe clip was not generated."
+        imagine = {
+            "url": url,
+            "prompt": wish,
+            "summary": summary,
+            "label": _IMAGINE_LABEL,
+        }
+        cited = [paper["arxiv_id"] for paper in papers]
+        _store_exchange(
+            conference_id, asked, answer, [], [], cited, imagine=imagine
+        )
+        return {
+            "answer": answer,
+            "papers": cited,
+            "trace": [],
+            "quotes": [],
+            "action": None,
+            "imagine": imagine,
+        }
     named = set(mentions or [])
     named.update(_ARXIV_RE.findall(asked))
     lowered = asked.lower()
@@ -1791,7 +1830,7 @@ def ask_conference(
     if named:
         chosen = [paper for paper in papers if paper["arxiv_id"] in named]
     else:
-        chosen = papers[:6]
+        chosen = papers
     if named and not chosen:
         answer = "None of those ids are on this conference list."
         _store_exchange(conference_id, asked, answer, [], [], [])
@@ -1814,6 +1853,23 @@ def ask_conference(
     }
 
 
+def clear_conference_messages(conference_id: str) -> dict[str, int]:
+    with _db() as conn:
+        _ensure_desk(conn)
+        row = conn.execute(
+            "SELECT 1 FROM conferences WHERE conference_id = ?",
+            (conference_id,),
+        ).fetchone()
+        if row is None:
+            raise BatchError(404, "conference not found")
+        cursor = conn.execute(
+            "DELETE FROM desk_messages WHERE conference_id = ?",
+            (conference_id,),
+        )
+        conn.commit()
+        return {"cleared": int(cursor.rowcount)}
+
+
 def conference_messages(conference_id: str) -> dict[str, Any]:
     with _db() as conn:
         _ensure_desk(conn)
@@ -1825,7 +1881,7 @@ def conference_messages(conference_id: str) -> dict[str, Any]:
             raise BatchError(404, "conference not found")
         rows = conn.execute(
             """
-            SELECT role, body, trace_json, quotes_json, papers_json
+            SELECT role, body, trace_json, quotes_json, papers_json, imagine_json
             FROM desk_messages
             WHERE conference_id = ?
             ORDER BY position ASC
@@ -1839,6 +1895,11 @@ def conference_messages(conference_id: str) -> dict[str, Any]:
             message["trace"] = json.loads(item["trace_json"] or "[]")
             message["quotes"] = json.loads(item["quotes_json"] or "[]")
             message["papers"] = json.loads(item["papers_json"] or "[]")
+            raw_imagine = item["imagine_json"]
+            if raw_imagine:
+                parsed = json.loads(raw_imagine)
+                if isinstance(parsed, dict):
+                    message["imagine"] = parsed
         messages.append(message)
     return {"messages": messages}
 
@@ -1850,6 +1911,7 @@ def _store_exchange(
     trace: list[dict[str, Any]],
     quotes: list[dict[str, Any]],
     papers: list[str],
+    imagine: dict[str, Any] | None = None,
 ) -> None:
     with _db() as conn:
         _ensure_desk(conn)
@@ -1862,8 +1924,8 @@ def _store_exchange(
             """
             INSERT INTO desk_messages (
                 message_id, conference_id, position, role, body,
-                trace_json, quotes_json, papers_json, created_at
-            ) VALUES (?, ?, ?, 'you', ?, '[]', '[]', '[]', ?)
+                trace_json, quotes_json, papers_json, imagine_json, created_at
+            ) VALUES (?, ?, ?, 'you', ?, '[]', '[]', '[]', NULL, ?)
             """,
             (str(uuid4()), conference_id, int(position) + 1, question, created),
         )
@@ -1871,8 +1933,8 @@ def _store_exchange(
             """
             INSERT INTO desk_messages (
                 message_id, conference_id, position, role, body,
-                trace_json, quotes_json, papers_json, created_at
-            ) VALUES (?, ?, ?, 'desk', ?, ?, ?, ?, ?)
+                trace_json, quotes_json, papers_json, imagine_json, created_at
+            ) VALUES (?, ?, ?, 'desk', ?, ?, ?, ?, ?, ?)
             """,
             (
                 str(uuid4()),
@@ -1882,6 +1944,7 @@ def _store_exchange(
                 json.dumps(trace),
                 json.dumps(quotes),
                 json.dumps(papers),
+                json.dumps(imagine) if imagine is not None else None,
                 created,
             ),
         )

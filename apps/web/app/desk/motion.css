@@ -134,12 +134,14 @@
 .pdf-band {
   position: absolute;
   z-index: 2;
-  background: #c4a15a;
+  background: #f3e2a8;
+  border-radius: 2px;
+  mix-blend-mode: multiply;
   pointer-events: none;
 }
 
 .pdf-band-contradicts {
-  background: #8c3a2f;
+  background: #f0c2b8;
 }
 
 @media (prefers-reduced-motion: reduce) {

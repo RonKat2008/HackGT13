@@ -23,6 +23,7 @@ from desk import (
     ask_conference,
     delete_conference,
     delete_submission,
+    clear_conference_messages,
     conference_desk,
     conference_messages,
     conference_reports_zip,
@@ -504,6 +505,14 @@ def desk_messages(conference_id: str) -> dict:
         _batch_http(exc)
 
 
+@app.delete("/desk/conferences/{conference_id}/messages")
+def desk_messages_clear(conference_id: str) -> dict:
+    try:
+        return clear_conference_messages(conference_id)
+    except BatchError as exc:
+        _batch_http(exc)
+
+
 @app.post("/desk/conferences/{conference_id}/ask")
 def desk_ask(conference_id: str, body: AskBody) -> dict:
     try:
@@ -585,6 +594,16 @@ def author_messages(job_id: str) -> dict:
 
     try:
         return list_author_messages(job_id)
+    except BatchError as exc:
+        _batch_http(exc)
+
+
+@app.delete("/author/papers/{job_id}/messages")
+def author_messages_clear(job_id: str) -> dict:
+    from author import clear_author_messages
+
+    try:
+        return clear_author_messages(job_id)
     except BatchError as exc:
         _batch_http(exc)
 

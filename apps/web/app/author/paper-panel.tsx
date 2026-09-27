@@ -75,6 +75,7 @@ export function PaperPanel() {
   const [focusText, setFocusText] = useState("");
   const [focusToken, setFocusToken] = useState(0);
   const [pdfOpen, setPdfOpen] = useState(false);
+  const [activeQuoteId, setActiveQuoteId] = useState("");
   const [adding, setAdding] = useState(false);
   const threadRef = useRef<HTMLDivElement>(null);
   const sendRef = useRef<(text?: string) => Promise<void>>(async () => {});
@@ -270,6 +271,14 @@ export function PaperPanel() {
 
   sendRef.current = send;
 
+  async function resetChat() {
+    if (!jobId || busy || messages.length === 0) return;
+    if (!window.confirm("Reset this chat? The thread is cleared. The paper stays.")) return;
+    const response = await fetch(`/api/author/papers/${jobId}/messages`, { method: "DELETE" });
+    if (!response.ok) return;
+    setMessages([]);
+  }
+
   useEffect(() => {
     const queued = takeChatPrompt();
     if (queued) void sendRef.current(queued);
@@ -292,8 +301,23 @@ export function PaperPanel() {
   }, []);
 
   function openQuote(quote: Quote) {
+    setActiveQuoteId(quote.quote_id);
     setFocusPage(typeof quote.page === "number" ? quote.page : null);
     setFocusText(quote.text || "");
+    setFocusToken((token) => token + 1);
+    setPdfOpen(true);
+  }
+
+  function openPaperAt(target: Paper) {
+    const issue = target.issues[0];
+    const claim = (target.claims ?? []).find((item) =>
+      ["contradicted", "unresolved", "could_not_reproduce", "insufficient_evidence"].includes(item.verdict),
+    );
+    setActiveQuoteId("");
+    setFocusPage(
+      typeof issue?.page === "number" ? issue.page : typeof claim?.page === "number" ? claim.page : 1,
+    );
+    setFocusText(issue?.evidence_span || issue?.claim_text || claim?.text || "");
     setFocusToken((token) => token + 1);
     setPdfOpen(true);
   }
@@ -472,7 +496,6 @@ export function PaperPanel() {
                         papers={[paper]}
                         citedIds={[paper.arxiv_id]}
                         trace={turn.trace ?? []}
-                        layout="findings"
                         formula={turn.action?.type === "explain" ? turn.action.formula : undefined}
                         pageAction={
                           turn.action?.type === "open"
@@ -485,16 +508,10 @@ export function PaperPanel() {
                               }
                             : null
                         }
-                        activeQuoteId=""
+                        activeQuoteId={activeQuoteId}
                         activeJobId={paper.job_id}
                         onOpenQuote={(quote) => openQuote(quote)}
-                        onOpenPaper={() => {
-                          const issue = paper.issues[0];
-                          setFocusPage(typeof issue?.page === "number" ? issue.page : 1);
-                          setFocusText(issue?.evidence_span || issue?.claim_text || "");
-                          setFocusToken((token) => token + 1);
-                          setPdfOpen(true);
-                        }}
+                        onOpenPaper={() => openPaperAt(paper)}
                       />
                     ),
                   )}
@@ -510,17 +527,27 @@ export function PaperPanel() {
 
           <div className="shrink-0 border-t border-[#e4dcd0] bg-[#f4f0e6] px-6 pb-5 pt-3">
             <div className="mx-auto w-full max-w-2xl">
-              <div className="mb-3 flex flex-wrap gap-2">
-                {CHIPS.map((label) => (
-                  <button
-                    key={label}
-                    type="button"
-                    onClick={() => void send(label)}
-                    className="rounded-full bg-white px-3 py-1.5 text-xs text-[#1c1915] ring-1 ring-[#e4dcd0] hover:bg-[#faf7f0]"
-                  >
-                    {label}
-                  </button>
-                ))}
+              <div className="mb-3 flex items-start justify-between gap-3">
+                <div className="flex flex-wrap gap-2">
+                  {CHIPS.map((label) => (
+                    <button
+                      key={label}
+                      type="button"
+                      onClick={() => void send(label)}
+                      className="rounded-full bg-white px-3 py-1.5 text-xs text-[#1c1915] ring-1 ring-[#e4dcd0] hover:bg-[#faf7f0]"
+                    >
+                      {label}
+                    </button>
+                  ))}
+                </div>
+                <button
+                  type="button"
+                  onClick={() => void resetChat()}
+                  disabled={busy || messages.length === 0}
+                  className="shrink-0 rounded-full bg-white px-3 py-1.5 text-xs text-[#8c3a2f] ring-1 ring-[#e4dcd0] hover:bg-[#faf7f0] disabled:opacity-40"
+                >
+                  Reset chat
+                </button>
               </div>
               <form
                 className="flex items-end gap-2 rounded-2xl bg-white px-4 py-3 ring-1 ring-[#e4dcd0]"
@@ -577,6 +604,8 @@ export function PaperPanel() {
             <div className="min-h-0 flex-1 overflow-auto p-3">
               <PdfView
                 jobId={jobId}
+                page={focusPage}
+                quote={focusText}
                 focusPage={focusPage}
                 focusText={focusText}
                 focusToken={focusToken}

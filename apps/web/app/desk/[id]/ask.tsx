@@ -18,6 +18,12 @@ type DeskAction = {
   text?: string;
   formula?: string;
 };
+type ImagineClip = {
+  url: string | null;
+  prompt?: string;
+  summary?: string;
+  label?: string;
+};
 type DeskTurn = {
   role: "desk";
   text: string;
@@ -25,6 +31,7 @@ type DeskTurn = {
   quotes: Quote[];
   papers: string[];
   action?: DeskAction | null;
+  imagine?: ImagineClip | null;
 };
 type Turn = YouTurn | DeskTurn;
 
@@ -192,6 +199,7 @@ export function AskDesk({
         quotes?: Quote[];
         papers?: string[];
         action?: DeskAction | null;
+        imagine?: ImagineClip | null;
       };
       const action = body.action ?? null;
       setTurns((current) => [
@@ -203,6 +211,7 @@ export function AskDesk({
           quotes: body.quotes ?? [],
           papers: body.papers ?? [],
           action,
+          ...(body.imagine !== undefined ? { imagine: body.imagine } : {}),
         },
       ]);
       if (action?.type === "open" && action.job_id) {
@@ -229,6 +238,17 @@ export function AskDesk({
 
   sendRef.current = send;
 
+  async function resetChat() {
+    if (busy || turns.length === 0) return;
+    if (!window.confirm("Reset this chat? The thread is cleared. The papers stay.")) return;
+    const response = await fetch(`/api/desk/conferences/${conferenceId}/messages`, {
+      method: "DELETE",
+    });
+    if (!response.ok) return;
+    setTurns([]);
+    setPanel(null);
+  }
+
   const starters = [
     "List the findings",
     "Open the first finding",
@@ -247,7 +267,7 @@ export function AskDesk({
                   Ask {conferenceName}
                 </h2>
                 <p className="mt-4 max-w-md text-sm leading-6 text-[#6b645c]">
-                  {papers.length} papers in this conversation. Type @ and a paper name to pin a question. The desk can list findings, open a page, and explain a stored formula. It does not change a verdict.
+                  {papers.length} papers in this conversation. Type @ and a paper name to pin a question. The desk can list findings, open a page, and explain a stored formula. Type /Imagine and then what you want the clip to emphasize. It does not change a verdict.
                 </p>
                 <ul className="mt-8 flex max-w-lg flex-col gap-2">
                   {starters.map((prompt, index) => (
@@ -273,21 +293,37 @@ export function AskDesk({
                       </p>
                     </article>
                   ) : (
-                    <ChatReply
-                      key={`desk-${index}`}
-                      text={turn.text}
-                      quotes={turn.quotes}
-                      papers={papers}
-                      citedIds={turn.papers}
-                      trace={turn.trace}
-                      formula={turn.action?.type === "explain" ? turn.action.formula : undefined}
-                      pageAction={turn.action?.type === "open" ? turn.action : null}
-                      conferenceId={conferenceId}
-                      activeQuoteId={panel?.kind === "quote" ? panel.quote.quote_id : ""}
-                      activeJobId={panel?.kind === "quote" ? panel.quote.job_id : ""}
-                      onOpenQuote={openQuote}
-                      onOpenPaper={openPaper}
-                    />
+                    <div key={`desk-${index}`} className="flex flex-col gap-3">
+                      <ChatReply
+                        text={turn.text}
+                        quotes={turn.quotes}
+                        papers={papers}
+                        citedIds={turn.papers}
+                        trace={turn.trace}
+                        formula={turn.action?.type === "explain" ? turn.action.formula : undefined}
+                        pageAction={turn.action?.type === "open" ? turn.action : null}
+                        conferenceId={conferenceId}
+                        activeQuoteId={panel?.kind === "quote" ? panel.quote.quote_id : ""}
+                        activeJobId={panel?.kind === "quote" ? panel.quote.job_id : ""}
+                        onOpenQuote={openQuote}
+                        onOpenPaper={openPaper}
+                      />
+                      {turn.imagine?.url ? (
+                        <div className="flex flex-col gap-2">
+                          <video
+                            src={turn.imagine.url}
+                            controls
+                            playsInline
+                            autoPlay
+                            muted
+                            className="w-full max-w-md rounded-2xl"
+                          />
+                          <p className="text-xs leading-5 text-[#6b645c]">
+                            Generated from this desk. Not a finding.
+                          </p>
+                        </div>
+                      ) : null}
+                    </div>
                   ),
                 )}
                 {busy ? (
@@ -316,6 +352,16 @@ export function AskDesk({
           }}
         >
           <div className={`mx-auto w-full ${embedded ? "" : "max-w-2xl"}`}>
+            <div className="mb-2 flex justify-end">
+              <button
+                type="button"
+                onClick={() => void resetChat()}
+                disabled={busy || turns.length === 0}
+                className="rounded-full bg-white px-3 py-1.5 text-xs text-[#8c3a2f] ring-1 ring-[#e4dcd0] hover:bg-[#faf7f0] disabled:opacity-40"
+              >
+                Reset chat
+              </button>
+            </div>
             {showMenu ? (
               <ul
                 id="paper-mentions"
