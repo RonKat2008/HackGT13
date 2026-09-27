@@ -190,11 +190,13 @@ function markQuote(root: HTMLElement, page: number | null, quote: string, role: 
     .replace(/\s+/g, " ")
     .trim()
     .split(" ")
-    .slice(0, 6)
+    .slice(0, 8)
     .join("")
     .toLowerCase();
   const number = quote.match(/\d+\.\d+/)?.[0] ?? "";
-  const needles = [full.slice(0, 48), words, number].filter((item) => item.length >= 4);
+  const needles = [full.slice(0, 320), full.slice(0, 80), words, number].filter(
+    (item, index, all) => item.length >= 4 && all.indexOf(item) === index,
+  );
   for (const needle of needles) {
     if (placeBand(root, page, needle, role, needle.length)) return true;
   }
@@ -228,13 +230,9 @@ function placeOnPage(pageEl: HTMLElement, needle: string, role: string, span: nu
   });
   const at = flat.indexOf(needle);
   if (at < 0 || !nodes[at]) return false;
-  const last = nodes[Math.min(nodes.length, at + Math.min(span, 80)) - 1];
-  if (!last) return false;
-  const range = document.createRange();
-  range.setStart(nodes[at].node, nodes[at].offset);
-  range.setEnd(last.node, last.offset + 1);
+  const end = Math.min(nodes.length, at + Math.min(span, needle.length));
   const pageRect = pageEl.getBoundingClientRect();
-  const lines = underlineLines(range);
+  const lines = underlineLines(nodes, at, end);
   if (!lines.length) return false;
   for (const line of lines) {
     const mark = document.createElement("div");
@@ -250,18 +248,104 @@ function placeOnPage(pageEl: HTMLElement, needle: string, role: string, span: nu
   return true;
 }
 
-function underlineLines(range: Range): { left: number; right: number; bottom: number }[] {
-  const rects = [...range.getClientRects()].filter((rect) => rect.width >= 0.5 && rect.height >= 0.5);
-  const lines: { top: number; left: number; right: number; bottom: number }[] = [];
-  for (const rect of rects) {
-    const line = lines.find((item) => Math.abs(item.top - rect.top) < 3);
+type Glyph = { node: Text; offset: number };
+type Box = { left: number; right: number; top: number; bottom: number };
+
+let measureCtx: CanvasRenderingContext2D | null = null;
+
+function underlineLines(nodes: Glyph[], start: number, end: number): { left: number; right: number; bottom: number }[] {
+  const boxes = selectionBoxes(nodes, start, end);
+  const lines: Box[] = [];
+  for (const box of boxes) {
+    const line = lines.find(
+      (item) => sameInkLine(item, box) && box.left <= item.right + Math.max(16, (box.bottom - box.top) * 1.25),
+    );
     if (!line) {
-      lines.push({ top: rect.top, left: rect.left, right: rect.right, bottom: rect.bottom });
+      lines.push({ ...box });
       continue;
     }
-    line.left = Math.min(line.left, rect.left);
-    line.right = Math.max(line.right, rect.right);
-    line.bottom = Math.max(line.bottom, rect.bottom);
+    line.left = Math.min(line.left, box.left);
+    line.right = Math.max(line.right, box.right);
+    line.top = Math.min(line.top, box.top);
+    line.bottom = Math.max(line.bottom, box.bottom);
   }
-  return lines;
+  return lines.map((line) => ({
+    left: line.left,
+    right: line.right,
+    bottom: line.bottom - underlineLift(line),
+  }));
+}
+
+function underlineLift(line: Box): number {
+  return Math.min(4, Math.max(2, (line.bottom - line.top) * 0.22));
+}
+
+function selectionBoxes(nodes: Glyph[], start: number, end: number): Box[] {
+  const groups: { span: HTMLElement; node: Text; raw: string; from: number; to: number }[] = [];
+  for (let index = start; index < end; index += 1) {
+    const { node, offset } = nodes[index];
+    const span = node.parentElement;
+    if (!span) continue;
+    const raw = node.textContent ?? "";
+    const last = groups.at(-1);
+    if (last && last.span === span && last.node === node) {
+      last.from = Math.min(last.from, offset);
+      last.to = Math.max(last.to, offset + 1);
+      continue;
+    }
+    groups.push({ span, node, raw, from: offset, to: offset + 1 });
+  }
+  return groups.flatMap((group) => {
+    const box = boxForSlice(group.span, group.node, group.raw, group.from, group.to);
+    return box ? [box] : [];
+  });
+}
+
+function boxForSlice(span: HTMLElement, node: Text, raw: string, from: number, to: number): Box | null {
+  const rect = span.getBoundingClientRect();
+  if (rect.width < 0.5 || rect.height < 0.5 || to <= from) return null;
+  if (from <= 0 && to >= raw.length) {
+    return { left: rect.left, right: rect.right, top: rect.top, bottom: rect.bottom };
+  }
+  const range = document.createRange();
+  range.setStart(node, from);
+  range.setEnd(node, Math.min(to, node.length));
+  const hit = range.getBoundingClientRect();
+  const inside = hit.left >= rect.left - 1 && hit.right <= rect.right + 1;
+  const fraction = (to - from) / Math.max(raw.length, 1);
+  const browserMissed = hit.width > rect.width * 0.97 && fraction < 0.8;
+  if (hit.width >= 0.5 && inside && !browserMissed) {
+    return {
+      left: Math.max(hit.left, rect.left),
+      right: Math.min(hit.right, rect.right),
+      top: rect.top,
+      bottom: rect.bottom,
+    };
+  }
+  const total = textWidth(span, raw);
+  const startW = textWidth(span, raw.slice(0, from));
+  const endW = textWidth(span, raw.slice(0, to));
+  const left = rect.left + (total > 0 ? (rect.width * startW) / total : (rect.width * from) / Math.max(raw.length, 1));
+  const right = rect.left + (total > 0 ? (rect.width * endW) / total : (rect.width * to) / Math.max(raw.length, 1));
+  if (right - left < 0.5) return null;
+  return {
+    left: Math.max(left, rect.left),
+    right: Math.min(right, rect.right),
+    top: rect.top,
+    bottom: rect.bottom,
+  };
+}
+
+function textWidth(span: HTMLElement, text: string): number {
+  if (!text) return 0;
+  if (!measureCtx) measureCtx = document.createElement("canvas").getContext("2d");
+  if (!measureCtx) return 0;
+  measureCtx.font = getComputedStyle(span).font;
+  return measureCtx.measureText(text).width;
+}
+
+function sameInkLine(a: Box, b: Box): boolean {
+  const overlap = Math.min(a.bottom, b.bottom) - Math.max(a.top, b.top);
+  const height = Math.min(a.bottom - a.top, b.bottom - b.top);
+  return height > 0 && overlap > height * 0.55;
 }

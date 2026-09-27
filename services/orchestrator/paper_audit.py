@@ -362,6 +362,7 @@ def audit_paper(
                     str(claim.get("claim_type") or "") == "numerical_comparison"
                     and not claim.get("computation")
                     and not claim_verify.lya_enabled()
+                    and not claim_verify.lya_model_off()
                 ):
                     steps = list(claim.get("steps") or [])
                     steps.append("No nearby table, so this gain was left unchecked.")
@@ -380,9 +381,12 @@ def audit_paper(
         with state.lock:
             if claim_verify.lya_enabled():
                 return
+            if claim_verify.lya_model_off():
+                claim_verify.close_uncertain(typed_claims)
+                return
             claim_verify.review_uncertain(typed_claims)
 
-    def stamp() -> None:
+    def _finish_issues() -> None:
         collapsed = unique_issues(issues)
         issues.clear()
         issues.extend(collapsed)
@@ -393,6 +397,10 @@ def audit_paper(
                 issue["reason"] = "The claim is contradicted by the paper evidence."
             else:
                 issue["reason"] = reason.split("\n")[0].strip()
+
+    def stamp() -> None:
+        with state.lock:
+            _finish_issues()
 
     steps: dict[str, Callable[[], None]] = {
         "parse": parse,
@@ -448,11 +456,16 @@ def audit_paper(
         with state.lock:
             _persist_visible_claims(job_id, typed_claims)
         execute("verify")
+        with state.lock:
+            _persist_visible_claims(job_id, typed_claims)
         execute("critic")
+        execute("stamp")
         repro_future.result()
+        with state.lock:
+            _finish_issues()
+            _persist_visible_claims(job_id, typed_claims)
     finally:
         pool.shutdown(wait=True)
-    execute("stamp")
     _annotate_pages(path, issues)
 
     for claim in typed_claims:

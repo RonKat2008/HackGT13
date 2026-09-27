@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import type { Paper, Quote, TraceStep } from "@/lib/desk";
 import { PdfView } from "../desk/pdf-view";
+import { ChatReply } from "../desk/reply";
 
 const CHIPS = [
   "what to fix first",
@@ -395,28 +396,24 @@ export function PaperPanel() {
                         </p>
                       </article>
                     ) : (
-                      <article key={`desk-${index}`} className="flex flex-col gap-3">
-                        <p className="max-w-[90%] text-sm leading-6 text-[#1c1915]">{turn.text}</p>
-                        {turn.quotes && turn.quotes.length > 0 ? (
-                          <ul className="flex flex-col gap-2">
-                            {turn.quotes.map((quote) => (
-                              <li key={quote.quote_id}>
-                                <button
-                                  type="button"
-                                  onClick={() => openQuote(quote)}
-                                  className="max-w-full rounded-2xl bg-white px-4 py-3 text-left text-sm leading-6 text-[#1c1915] ring-1 ring-[#e4dcd0] hover:bg-[#faf7f0]"
-                                >
-                                  <span className="block text-[11px] tracking-[0.12em] text-[#6b645c]">
-                                    {quote.page != null ? `page ${quote.page}` : "passage"}
-                                    {quote.issue_type ? ` · ${quote.issue_type}` : ""}
-                                  </span>
-                                  <span className="mt-1 block line-clamp-3">{quote.text}</span>
-                                </button>
-                              </li>
-                            ))}
-                          </ul>
-                        ) : null}
-                      </article>
+                      <ChatReply
+                        key={`desk-${index}`}
+                        text={turn.text}
+                        quotes={turn.quotes ?? []}
+                        papers={[paper]}
+                        citedIds={[paper.arxiv_id]}
+                        trace={[]}
+                        layout="findings"
+                        activeQuoteId=""
+                        onOpenQuote={(quote) => openQuote(quote)}
+                        onOpenPaper={() => {
+                          const issue = paper.issues[0];
+                          setFocusPage(typeof issue?.page === "number" ? issue.page : 1);
+                          setFocusText(issue?.evidence_span || issue?.claim_text || "");
+                          setFocusToken((token) => token + 1);
+                          setPdfOpen(true);
+                        }}
+                      />
                     ),
                   )}
                   {busy ? (

@@ -41,6 +41,7 @@ def _enable(monkeypatch, tmp_path) -> None:
     monkeypatch.setenv("XAI_API_KEY", FAKE_XAI)
     monkeypatch.setenv("OPENROUTER_API_KEY", FAKE_OPENROUTER)
     monkeypatch.setenv("LYA_THRESHOLD", "0.90")
+    monkeypatch.delenv("LYA_MODEL", raising=False)
 
 
 def _script_lya(monkeypatch, answer: dict) -> list:
@@ -68,6 +69,7 @@ def _script_jev(monkeypatch, answers) -> list:
 
 def test_missing_xai_key_does_not_call_the_network(monkeypatch) -> None:
     monkeypatch.delenv("XAI_API_KEY", raising=False)
+    monkeypatch.delenv("LYA_MODEL", raising=False)
 
     def boom(*_args, **_kwargs):
         raise AssertionError("Lya must not call the network without a key")
@@ -379,6 +381,7 @@ def test_holdout_covers_the_hard_case_kinds() -> None:
 
 def test_lya_cache_skips_a_second_identical_call(tmp_path, monkeypatch) -> None:
     monkeypatch.setenv("RUN_DB", str(tmp_path / "lya.sqlite"))
+    monkeypatch.delenv("LYA_MODEL", raising=False)
     hits = {"n": 0}
 
     def handler(_request: httpx.Request) -> httpx.Response:

@@ -106,7 +106,6 @@ def _assert_parallel_specialist_order(recorded: list[tuple[str, str]]) -> None:
     assert at("verify", "started") < at("verify", "finished")
     assert at("verify", "finished") < at("critic", "started") < at("critic", "finished")
     assert at("critic", "finished") < at("stamp", "started")
-    assert at("reproduce", "finished") < at("stamp", "started")
     assert at("stamp", "started") < at("stamp", "finished")
     started = [name for name, phase in recorded if phase == "started"]
     finished = [name for name, phase in recorded if phase == "finished"]
@@ -517,3 +516,55 @@ def test_verify_starts_before_a_slow_reproduce_finishes(monkeypatch: pytest.Monk
     monkeypatch.setattr(paper_audit.claim_verify, "judge_with_lya", judge)
     audit_paper(HUMAN, "job-slow-repro", repro=slow)
     assert marks["verify"] < marks["repro_done"]
+
+
+def test_stamp_starts_while_reproduction_is_still_running(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls, recorder = _collecting_recorder()
+    release = threading.Event()
+
+    def slow(_claims: list, _sections: dict) -> list:
+        assert release.wait(timeout=30)
+        return []
+
+    monkeypatch.setattr(paper_audit.claim_verify, "judge_with_lya", lambda *_args, **_kwargs: None)
+    box: dict = {}
+
+    def run() -> None:
+        box["result"] = audit_paper(HUMAN, "job-stamp-first", recorder=recorder, repro=slow)
+
+    worker = threading.Thread(target=run)
+    worker.start()
+    deadline = time.time() + 60
+    stamped = False
+    try:
+        while time.time() < deadline:
+            recorded = [(name, state) for _job, name, state, _detail in calls]
+            if ("stamp", "started") in recorded:
+                assert ("reproduce", "finished") not in recorded
+                stamped = True
+                break
+            time.sleep(0.05)
+    finally:
+        release.set()
+    worker.join(30)
+    assert stamped
+    assert "result" in box
+
+
+def test_jev_only_critic_closes_without_another_round(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("LYA_MODEL", "off")
+    monkeypatch.setenv("ARX_LYA", "live")
+    called = {"review": 0, "close": 0}
+
+    def review(*_args: object, **_kwargs: object) -> None:
+        called["review"] += 1
+
+    def close(_claims: list) -> None:
+        called["close"] += 1
+
+    monkeypatch.setattr(paper_audit.claim_verify, "review_uncertain", review)
+    monkeypatch.setattr(paper_audit.claim_verify, "close_uncertain", close)
+    monkeypatch.setattr(paper_audit.claim_verify, "judge_with_lya", lambda *_args, **_kwargs: None)
+    audit_paper(HUMAN, "job-jev-only", repro=lambda *_args, **_kwargs: [])
+    assert called["review"] == 0
+    assert called["close"] == 1

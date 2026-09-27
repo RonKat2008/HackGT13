@@ -4,9 +4,9 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import type { Paper, Quote, TraceStep } from "@/lib/desk";
 import type { DeskVoiceAction } from "../voice-action";
 import { takeChatPrompt } from "../voice-action";
-import { GoldThread } from "../gold-thread";
 import { MorphLink } from "../morph-link";
 import { PdfView } from "../pdf-view";
+import { ChatReply, issueLabel } from "../reply";
 
 type YouTurn = { role: "you"; text: string };
 type DeskAction = {
@@ -56,7 +56,6 @@ export function AskDesk({
   const [cursor, setCursor] = useState(0);
   const [cursorQuery, setCursorQuery] = useState<string | null>(null);
   const [panel, setPanel] = useState<Panel | null>(null);
-  const [threadFrom, setThreadFrom] = useState<HTMLElement | null>(null);
   const threadRef = useRef<HTMLDivElement>(null);
   const fieldRef = useRef<HTMLTextAreaElement>(null);
   const markerRef = useRef<HTMLButtonElement | null>(null);
@@ -120,10 +119,7 @@ export function AskDesk({
   }
 
   function openQuote(quote: Quote, button?: HTMLButtonElement | null) {
-    if (button) {
-      markerRef.current = button;
-      setThreadFrom(quote.text ? button : null);
-    }
+    if (button) markerRef.current = button;
     if (onOpenQuote) {
       onOpenQuote(quote);
       return;
@@ -135,7 +131,6 @@ export function AskDesk({
     if (button) markerRef.current = button;
     const unread = !paper.paper_text.trim() && paper.status !== "passed" && paper.status !== "contradicted";
     if (unread) {
-      setThreadFrom(null);
       const quote: Quote = {
         quote_id: `unread-${paper.job_id}`,
         job_id: paper.job_id,
@@ -168,7 +163,6 @@ export function AskDesk({
 
   function closePanel() {
     setPanel(null);
-    setThreadFrom(null);
     markerRef.current?.focus();
   }
 
@@ -244,7 +238,6 @@ export function AskDesk({
 
   return (
     <section className="relative flex min-h-0 flex-1 flex-col lg:flex-row">
-      <GoldThread from={threadFrom} />
       <div className="flex min-h-0 min-w-0 flex-1 flex-col">
         <div ref={threadRef} className="min-h-0 flex-1 overflow-y-auto px-6 py-8">
           <div className={`mx-auto flex min-h-full w-full flex-col ${embedded ? "" : "max-w-2xl"}`}>
@@ -256,13 +249,13 @@ export function AskDesk({
                 <p className="mt-4 max-w-md text-sm leading-6 text-[#6b645c]">
                   {papers.length} papers in this conversation. Type @ and a paper name to pin a question. The desk can list findings, open a page, and explain a stored formula. It does not change a verdict.
                 </p>
-                <ul className="mt-10 max-w-lg">
+                <ul className="mt-8 flex max-w-lg flex-col gap-2">
                   {starters.map((prompt, index) => (
                     <li key={prompt} className="desk-rise" style={{ animationDelay: `${80 + index * 70}ms` }}>
                       <button
                         type="button"
                         onClick={() => void send(prompt)}
-                        className="w-full border-t border-[#e4dcd0] py-3 text-left text-sm leading-6 hover:bg-white/50"
+                        className="w-full rounded-2xl bg-white px-4 py-3 text-left text-sm leading-6 text-[#1c1915] ring-1 ring-[#e4dcd0] hover:ring-[#c4a15a]"
                       >
                         {prompt}
                       </button>
@@ -280,11 +273,18 @@ export function AskDesk({
                       </p>
                     </article>
                   ) : (
-                    <DeskReply
+                    <ChatReply
                       key={`desk-${index}`}
-                      turn={turn}
+                      text={turn.text}
+                      quotes={turn.quotes}
                       papers={papers}
-                      activeQuote={panel?.kind === "quote" ? panel.quote.quote_id : ""}
+                      citedIds={turn.papers}
+                      trace={turn.trace}
+                      formula={turn.action?.type === "explain" ? turn.action.formula : undefined}
+                      pageAction={turn.action?.type === "open" ? turn.action : null}
+                      conferenceId={conferenceId}
+                      activeQuoteId={panel?.kind === "quote" ? panel.quote.quote_id : ""}
+                      activeJobId={panel?.kind === "quote" ? panel.quote.job_id : ""}
                       onOpenQuote={openQuote}
                       onOpenPaper={openPaper}
                     />
@@ -423,14 +423,26 @@ export function AskDesk({
               <div>
                 <p className="font-[family-name:var(--desk-serif)] text-lg leading-tight">{panel.quote.title}</p>
                 <p className="mt-1 text-xs text-[#6b645c]">
-                  {panel.quote.page ? `Page ${panel.quote.page}` : "Page"}
+                  {panel.quote.issue_type ? `${issueLabel(panel.quote.issue_type)} · ` : ""}
+                  {panel.quote.page ? `Page ${panel.quote.page}` : "Paper"}
                 </p>
+                {panel.quote.reason ? (
+                  <p className="mt-1 text-sm leading-6 text-[#1c1915]">{panel.quote.reason}</p>
+                ) : null}
               </div>
-              <button type="button" className="text-xs underline decoration-[#c4a15a] underline-offset-4" onClick={closePanel}>
-                Close
-              </button>
+              <div className="flex shrink-0 flex-col items-end gap-2">
+                <MorphLink
+                  href={`/desk/${conferenceId}/${panel.quote.job_id}`}
+                  className="text-xs underline decoration-[#c4a15a] underline-offset-4"
+                >
+                  Full paper
+                </MorphLink>
+                <button type="button" className="text-xs underline decoration-[#c4a15a] underline-offset-4" onClick={closePanel}>
+                  Close
+                </button>
+              </div>
             </header>
-            {panel.quote.text ? (
+            {panel.quote.text && panel.quote.text !== panel.quote.reason ? (
               <p className="border-b border-[#e4dcd0] bg-[#f4f0e6] px-4 py-3 text-sm leading-6 text-[#1c1915]">
                 {panel.quote.text}
               </p>
@@ -462,134 +474,6 @@ export function AskDesk({
       </aside>
       )}
     </section>
-  );
-}
-
-function DeskReply({
-  turn,
-  papers,
-  activeQuote,
-  onOpenQuote,
-  onOpenPaper,
-}: {
-  turn: DeskTurn;
-  papers: Paper[];
-  activeQuote: string;
-  onOpenQuote: (quote: Quote, button?: HTMLButtonElement | null) => void;
-  onOpenPaper: (paper: Paper, button?: HTMLButtonElement | null) => void;
-}) {
-  const [shown, setShown] = useState(0);
-  useEffect(() => {
-    const reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-    if (reduce || turn.trace.length === 0) {
-      setShown(turn.trace.length);
-      return;
-    }
-    setShown(0);
-    let step = 0;
-    const timer = window.setInterval(() => {
-      step += 1;
-      setShown(step);
-      if (step >= turn.trace.length) window.clearInterval(timer);
-    }, 280);
-    return () => window.clearInterval(timer);
-  }, [turn.trace]);
-  const ready = shown >= turn.trace.length;
-  const chosen = turn.papers
-    .map((id) => papers.find((paper) => paper.arxiv_id === id))
-    .filter((paper): paper is Paper => Boolean(paper));
-
-  return (
-    <article className="desk-rise max-w-[40rem] border-l border-[#c4a15a] pl-4">
-      {turn.trace.length > 0 ? (
-        <ol className="mb-4 flex flex-col gap-2">
-          {turn.trace.slice(0, shown).map((step) => (
-            <li key={step.id} className="desk-rise text-xs leading-5 text-[#6b645c]">
-              {step.kind === "quote" ? (
-                <button
-                  type="button"
-                  className="text-left text-[#1c1915] underline decoration-[#c4a15a] underline-offset-4"
-                  aria-controls="cited-passage"
-                  onClick={(event) => {
-                    const quote = turn.quotes.find((item) => item.quote_id === step.quote_id);
-                    if (quote) onOpenQuote(quote, event.currentTarget);
-                  }}
-                >
-                  {step.label}
-                  {step.detail ? ` · ${step.detail}` : ""}
-                </button>
-              ) : (
-                <span>
-                  {step.label}
-                  {step.kind === "choose" ? ` · ${step.detail}` : ""}
-                </span>
-              )}
-            </li>
-          ))}
-        </ol>
-      ) : null}
-      {ready ? (
-        <>
-          {chosen.length > 0 ? (
-            <div className="mb-3 flex flex-wrap gap-2">
-              {chosen.map((paper) => (
-                <button
-                  key={paper.job_id}
-                  type="button"
-                  aria-controls="cited-passage"
-                  onClick={(event) => onOpenPaper(paper, event.currentTarget)}
-                  className="rounded-full bg-white px-3 py-1 text-xs text-[#1c1915] ring-1 ring-[#e4dcd0]"
-                >
-                  {nameOf(paper)}
-                </button>
-              ))}
-            </div>
-          ) : null}
-          <p className="text-sm leading-7 text-[#1c1915]">{turn.text}</p>
-          {turn.action?.type === "open" && turn.action.job_id ? (
-            <button
-              type="button"
-              className="mt-3 rounded-full bg-white px-3 py-1 text-xs text-[#1c1915] ring-1 ring-[#e4dcd0]"
-              onClick={() =>
-                onOpenQuote({
-                  quote_id: `bot-${turn.action?.job_id}`,
-                  job_id: turn.action?.job_id || "",
-                  arxiv_id: turn.action?.arxiv_id || "",
-                  title: turn.action?.title || "Paper",
-                  page: typeof turn.action?.page === "number" ? turn.action.page : null,
-                  text: turn.action?.text || "",
-                  issue_type: "",
-                  reason: "",
-                })
-              }
-            >
-              {typeof turn.action.page === "number" ? `Open page ${turn.action.page}` : "Open this page"}
-            </button>
-          ) : null}
-          {turn.action?.type === "explain" && turn.action.formula ? (
-            <p className="mt-2 text-xs text-[#6b645c]">Formula {turn.action.formula}</p>
-          ) : null}
-          {turn.quotes.length > 0 ? (
-            <div className="mt-3 flex flex-wrap gap-2">
-              {turn.quotes.map((quote, index) => (
-                <button
-                  key={quote.quote_id}
-                  type="button"
-                  aria-controls="cited-passage"
-                  aria-pressed={activeQuote === quote.quote_id}
-                  onClick={(event) => onOpenQuote(quote, event.currentTarget)}
-                  className={`rounded-full px-2 py-1 text-xs ${
-                    activeQuote === quote.quote_id ? "bg-[#f3e6c8] text-[#1c1915]" : "bg-white text-[#1c1915] ring-1 ring-[#e4dcd0]"
-                  }`}
-                >
-                  [{index + 1}]
-                </button>
-              ))}
-            </div>
-          ) : null}
-        </>
-      ) : null}
-    </article>
   );
 }
 

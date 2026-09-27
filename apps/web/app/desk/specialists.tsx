@@ -73,8 +73,13 @@ function outcome(paper: Paper, name: string): "fail" | "pass" | "open" {
 }
 
 function cardState(paper: Paper, name: string): "idle" | "now" | "done" {
+  const started = paper.events.some((event) => event.specialist === name && event.state === "started");
+  const finished =
+    Boolean(finishedDetail(paper, name)) ||
+    paper.events.some((event) => event.specialist === name && event.state === "finished");
+  if (name === "reproduce" && paper.status === "running" && started && !finished) return "now";
   if (paper.status === "running" && paper.specialist === name) return "now";
-  if (finishedDetail(paper, name) || paper.events.some((event) => event.specialist === name && event.state === "finished")) {
+  if (finished) {
     return "done";
   }
   if (paper.status === "passed" || paper.status === "contradicted") return "done";

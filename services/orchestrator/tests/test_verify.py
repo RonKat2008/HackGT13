@@ -10,6 +10,8 @@ from paper_audit import audit_paper
 from verify import (
     build_source_text,
     cache_key,
+    close_uncertain,
+    critic_sentence,
     finished_sentence,
     judge_claims,
     judge_with_lya,
@@ -517,3 +519,58 @@ def test_without_the_lya_flag_the_judge_still_calls_jev(tmp_path, monkeypatch) -
     assert claim["verdict"] == "contradicted"
     assert "Jev judgment" in claim["steps"]
     assert "Lya verdict" not in claim["steps"]
+
+
+def test_lya_model_off_uses_jev_and_skips_lya(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("RUN_DB", str(tmp_path / "cache.sqlite"))
+    monkeypatch.setenv("OPENROUTER_API_KEY", "test-openrouter-key-not-real")
+    monkeypatch.setenv("ARX_LYA", "live")
+    monkeypatch.setenv("LYA_MODEL", "off")
+    calls = _scripted(monkeypatch, JUDGED)
+
+    def boom(*_args, **_kwargs):
+        raise AssertionError("Lya must not run when LYA_MODEL is off")
+
+    monkeypatch.setattr("lya.judge_claims", boom)
+    monkeypatch.setattr("lya.judge_claim", boom)
+    claim = _claim(
+        "Accuracy reached 95.2% on the public benchmark.",
+        "numerical",
+        [
+            {
+                "page": 2,
+                "section": "results",
+                "text": "The model accuracy was 61.0%.",
+                "role": "contradicts",
+                "source": "paper",
+            }
+        ],
+    )
+    judge_with_lya([claim])
+    assert len(calls) == 1
+    assert claim["verdict"] == "contradicted"
+    assert "Jev judgment" in claim["steps"]
+    assert "Lya verdict" not in claim["steps"]
+
+
+def test_close_uncertain_stops_after_one_judge_pass() -> None:
+    uncertain = {
+        "claim_type": "semantic",
+        "verdict": "not_mentioned",
+        "confidence": 0.4,
+        "steps": ["Jev judgment"],
+        "text": "The model improves accuracy by 18.7 percent on the public split.",
+    }
+    settled = {
+        "claim_type": "semantic",
+        "verdict": "supported",
+        "confidence": 0.95,
+        "steps": ["Jev judgment"],
+        "text": "The training split has 12841 rows.",
+    }
+    close_uncertain([uncertain, settled])
+    assert uncertain["verdict"] == "insufficient_evidence"
+    assert uncertain["reason"] == "Requires human review"
+    assert "Stopped after one judge pass" in uncertain["steps"]
+    assert settled["verdict"] == "supported"
+    assert critic_sentence([uncertain, settled]) == "Left 1 uncertain claim for a person."

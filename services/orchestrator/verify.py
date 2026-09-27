@@ -94,11 +94,33 @@ def critic_sentence(claims: list[dict[str, Any]]) -> str:
             for step in (claim.get("steps") or [])
         )
     ]
-    if not reviewed:
+    closed = [
+        claim
+        for claim in claims
+        if any(str(step) == "Stopped after one judge pass" for step in (claim.get("steps") or []))
+    ]
+    if not reviewed and not closed:
         return "No uncertain verdict to review."
+    if closed and not reviewed:
+        count = len(closed)
+        unit = "claim" if count == 1 else "claims"
+        return f"Left {count} uncertain {unit} for a person."
     count = len(reviewed)
     unit = "claim" if count == 1 else "claims"
     return f"Reviewed {count} uncertain {unit}."
+
+
+def close_uncertain(claims: list[dict[str, Any]]) -> None:
+    """One judge pass is the budget. Claims still uncertain stop for a person."""
+    for claim in claims:
+        if deterministic_final(claim) or _number_contradicted(claim):
+            continue
+        if not _uncertain(claim):
+            continue
+        claim["verdict"] = "insufficient_evidence"
+        claim["confidence"] = _confidence(claim.get("confidence"))
+        claim["reason"] = "Requires human review"
+        _append_step(claim, "Stopped after one judge pass")
 
 
 def review_uncertain(
@@ -251,7 +273,13 @@ def judge_claims(claims: list[dict[str, Any]]) -> None:
             future.result()
 
 
+def lya_model_off() -> bool:
+    return os.environ.get("LYA_MODEL", "").strip().lower() == "off"
+
+
 def lya_enabled() -> bool:
+    if lya_model_off():
+        return False
     if os.environ.get("PYTEST_CURRENT_TEST") and os.environ.get("ARX_LYA") != "live":
         return False
     return True
