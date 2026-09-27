@@ -34,6 +34,10 @@ function conferenceOf(path: string): string | null {
   return parts[1];
 }
 
+function authorPath(path: string): boolean {
+  return path === "/author" || path.startsWith("/author/");
+}
+
 function deskQuery(extra: Record<string, string>): string {
   const current = new URLSearchParams(window.location.search);
   const next = new URLSearchParams();
@@ -76,17 +80,23 @@ function floatToPcm16(input: Float32Array): Uint8Array {
   return new Uint8Array(pcm.buffer);
 }
 
-function instructionsFor(papers: PaperRef[]): string {
+function instructionsFor(papers: PaperRef[], author: boolean): string {
   const names = papers.slice(0, 30).map((paper) => {
     const title = (paper.title || paper.arxiv_id).slice(0, 80);
     return `${title} (${paper.arxiv_id})`;
   });
   return [
     "You are the silent control for the PreSearch desk. Do not speak.",
-    "When the chair asks to pull up, show, or open a screen, call show_screen and say nothing.",
-    "view summary opens the summary. view chat opens the conference chat.",
+    author
+      ? "When the author asks to pull up, show, or open a screen, call show_screen and say nothing."
+      : "When the chair asks to pull up, show, or open a screen, call show_screen and say nothing.",
+    author
+      ? "view summary stays on this paper. view chat stays on this paper's chat."
+      : "view summary opens the summary. view chat opens the conference chat.",
     "view paper opens a paper. Put the title or arXiv id in paper. Set ask true when they want the chatbot with that paper.",
-    "view ask sends a question into the conference chat. Use it for errors, findings, issues, or any question about the papers. Put their request in prompt.",
+    author
+      ? "view ask sends a question into this paper's chat. Use it for errors, findings, issues, or any question about the paper. Put their request in prompt."
+      : "view ask sends a question into the conference chat. Use it for errors, findings, issues, or any question about the papers. Put their request in prompt.",
     "Never change a stored verdict.",
     names.length ? `Papers: ${names.join("; ")}.` : "No papers are on the list yet.",
   ].join(" ");
@@ -116,12 +126,14 @@ export function VoiceDesk() {
   const path = usePathname();
   const router = useRouter();
   const conferenceId = conferenceOf(path);
+  const onAuthor = authorPath(path);
   const [listening, setListening] = useState(false);
   const [engine, setEngine] = useState("");
   const [heard, setHeard] = useState("");
   const [error, setError] = useState("");
   const papersRef = useRef<PaperRef[]>([]);
   const conferenceRef = useRef(conferenceId);
+  const authorRef = useRef(onAuthor);
   const recent = useRef({ key: "", at: 0 });
   const live = useRef(false);
   const listeningRef = useRef(false);
@@ -130,12 +142,14 @@ export function VoiceDesk() {
   const routerRef = useRef(router);
   listeningRef.current = listening;
   conferenceRef.current = conferenceId;
+  authorRef.current = onAuthor;
   routerRef.current = router;
 
   useEffect(() => {
-    if (!conferenceId) return;
+    if (!conferenceId && !onAuthor) return;
     let cancelled = false;
-    void fetch(`/api/desk/conferences/${conferenceId}`).then(async (response) => {
+    const url = onAuthor ? "/api/author/papers" : `/api/desk/conferences/${conferenceId}`;
+    void fetch(url).then(async (response) => {
       if (!response.ok || cancelled) return;
       const body = (await response.json()) as { papers?: PaperRef[] };
       if (!Array.isArray(body.papers)) return;
@@ -148,7 +162,7 @@ export function VoiceDesk() {
     return () => {
       cancelled = true;
     };
-  }, [conferenceId]);
+  }, [conferenceId, onAuthor]);
 
   useEffect(() => {
     function onKey(event: KeyboardEvent) {
@@ -199,9 +213,16 @@ export function VoiceDesk() {
     if (recent.current.key === key && now - recent.current.at < 3000) return;
     recent.current = { key, at: now };
     const id = conferenceRef.current;
-    if (!id) return;
+    const author = authorRef.current;
+    if (!id && !author) return;
     if (action.type === "prompt" && action.text) queueChatPrompt(action.text);
     window.dispatchEvent(new CustomEvent("desk-voice", { detail: action }));
+    if (author) {
+      if (action.type === "prompt") setHeard("Sent to chat");
+      else if (action.type === "open") setHeard("Opening the paper");
+      else if (action.type === "show") setHeard(action.view === "chat" ? "Chat." : "On this paper.");
+      return;
+    }
     if (action.type === "prompt") {
       setHeard("Sent to chat");
       routerRef.current.push(`/desk/${id}${deskQuery({ view: "chat" })}`);
@@ -353,7 +374,7 @@ export function VoiceDesk() {
           type: "session.update",
           session: {
             voice: "eve",
-            instructions: instructionsFor(papersRef.current),
+            instructions: instructionsFor(papersRef.current, authorRef.current),
             turn_detection: { type: "server_vad" },
             tools: [SHOW_SCREEN],
             audio: {
@@ -462,12 +483,12 @@ export function VoiceDesk() {
   }
 
   toggleRef.current = () => {
-    if (!conferenceRef.current) return;
+    if (!conferenceRef.current && !authorRef.current) return;
     if (listeningRef.current) stop();
     else void start();
   };
 
-  if (!conferenceId) return null;
+  if (!conferenceId && !onAuthor) return null;
 
   return (
     <div className="pointer-events-none fixed bottom-4 right-4 z-30 flex flex-col items-end gap-2">

@@ -21,12 +21,21 @@ async function nextIsAuthor(formData: FormData): Promise<boolean> {
   }
 }
 
+function chosenDesk(formData: FormData): "author" | "conference" {
+  return String(formData.get("desk") ?? "") === "author" ? "author" : "conference";
+}
+
+function signupPath(desk: "author" | "conference", params: Record<string, string>) {
+  return `/signup?${new URLSearchParams({ desk, ...params }).toString()}`;
+}
+
 export async function signIn(formData: FormData) {
   const email = String(formData.get("email") ?? "").trim();
   const password = String(formData.get("password") ?? "");
   const supabase = await createClient();
-  const { error } = await supabase.auth.signInWithPassword({ email, password });
-  const toAuthor = await nextIsAuthor(formData);
+  const { data, error } = await supabase.auth.signInWithPassword({ email, password });
+  const toAuthor =
+    (await nextIsAuthor(formData)) || data.user?.user_metadata?.desk === "author";
   if (error) {
     const q = new URLSearchParams({ error: error.message });
     if (toAuthor) q.set("next", "/author");
@@ -38,13 +47,20 @@ export async function signIn(formData: FormData) {
 export async function signUp(formData: FormData) {
   const email = String(formData.get("email") ?? "").trim();
   const password = String(formData.get("password") ?? "");
-  if (password.length < 8) redirect("/signup?error=Use%20a%20password%20of%20at%20least%208%20characters.");
+  const desk = chosenDesk(formData);
+  const home = desk === "author" ? "/author" : "/desk";
+  if (password.length < 8) {
+    redirect(signupPath(desk, { error: "Use a password of at least 8 characters." }));
+  }
   const origin = (await headers()).get("origin") ?? "http://127.0.0.1:3000";
   const supabase = await createClient();
   const { data, error } = await supabase.auth.signUp({
     email,
     password,
-    options: { emailRedirectTo: `${origin}/desk` },
+    options: {
+      emailRedirectTo: `${origin}${home}`,
+      data: { desk },
+    },
   });
   if (error || !data.user) {
     const message = error?.message ?? "Could not create the account.";
@@ -53,10 +69,10 @@ export async function signUp(formData: FormData) {
       : /signups are disabled/i.test(message)
         ? "The Email provider is off in Supabase. Turn Email back on, and leave Confirm email off, then create the account again."
         : message;
-    redirect(`/signup?error=${encodeURIComponent(shown)}`);
+    redirect(signupPath(desk, { error: shown }));
   }
-  if (!data.session) redirect("/signup?sent=1");
-  redirect("/desk");
+  if (!data.session) redirect(signupPath(desk, { sent: "1" }));
+  redirect(home);
 }
 
 export async function signOut() {

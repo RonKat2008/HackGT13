@@ -4,7 +4,9 @@ import { signUp } from "@/lib/auth";
 import Link from "next/link";
 import { useEffect, useState } from "react";
 
-type Desk = "author" | "conference";
+export type DeskChoice = "author" | "conference";
+
+type Desk = DeskChoice;
 
 export function AccountSplit({
   initial,

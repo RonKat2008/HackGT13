@@ -174,9 +174,109 @@
   6% { color: #c4a15a; }
 }
 
+.desk-split {
+  display: flex;
+  min-height: calc(100dvh - 4.5rem);
+}
+
+.desk-pane {
+  display: flex;
+  flex: 1 1 50%;
+  min-width: 0;
+  overflow: hidden;
+  transition: flex-basis 480ms cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+.desk-pane-author {
+  background: #f4f0e6;
+  color: #1c1915;
+}
+
+.desk-pane-conference {
+  background: #1c1915;
+  color: #f4f0e6;
+}
+
+.desk-split.is-author .desk-pane-author,
+.desk-split.is-conference .desk-pane-conference {
+  flex: 1 1 auto;
+}
+
+.desk-split.is-author .desk-pane-conference,
+.desk-split.is-conference .desk-pane-author {
+  flex: 0 0 0px;
+  pointer-events: none;
+}
+
+.desk-pane-hit,
+.desk-pane-stage {
+  display: flex;
+  width: 100%;
+  min-height: calc(100dvh - 4.5rem);
+  flex-direction: column;
+  justify-content: flex-end;
+  gap: 1.5rem;
+  padding: 3rem;
+  text-align: left;
+}
+
+.desk-pane-hit {
+  border: 0;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+}
+
+.desk-pane-hit:disabled {
+  cursor: default;
+}
+
+.desk-pane-copy {
+  display: flex;
+  max-width: 28rem;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.desk-pane-kicker {
+  font-size: 11px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+}
+
+.desk-pane-author .desk-pane-kicker {
+  color: #8c3a2f;
+}
+
+.desk-pane-conference .desk-pane-kicker {
+  color: #c4a15a;
+}
+
+.desk-pane-title {
+  font-family: var(--desk-serif), ui-serif, Georgia, serif;
+  font-size: clamp(3rem, 6vw, 5.5rem);
+  line-height: 0.92;
+}
+
+.desk-pane-line {
+  max-width: 22rem;
+  font-size: 0.95rem;
+  line-height: 1.6;
+  opacity: 0.8;
+}
+
+.desk-pane-form {
+  display: flex;
+  width: min(28rem, 100%);
+  flex-direction: column;
+  gap: 1rem;
+  animation: film-beat 0.45s cubic-bezier(0.2, 0.8, 0.2, 1) both;
+}
 
 @media (prefers-reduced-motion: reduce) {
   .film-beat,
+  .desk-pane,
+  .desk-pane-form,
   .hero-word,
   .hero-lede,
   .hero-actions,
@@ -192,7 +292,8 @@
   }
 
   .stage-tick,
-  .reading-slip {
+  .reading-slip,
+  .desk-pane {
     transition: none;
   }
 

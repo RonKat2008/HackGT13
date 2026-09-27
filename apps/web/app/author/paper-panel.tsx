@@ -4,6 +4,8 @@ import { useEffect, useRef, useState, type FormEvent } from "react";
 import type { Paper, Quote, TraceStep } from "@/lib/desk";
 import { PdfView } from "../desk/pdf-view";
 import { ChatReply } from "../desk/reply";
+import type { DeskVoiceAction } from "../desk/voice-action";
+import { takeChatPrompt } from "../desk/voice-action";
 
 const CHIPS = [
   "what to fix first",
@@ -23,13 +25,20 @@ type ShelfItem = {
 
 type AskAction = {
   type: "refuse" | "explain" | "open" | "list";
-  [key: string]: unknown;
+  formula?: string;
+  job_id?: string;
+  arxiv_id?: string;
+  title?: string;
+  page?: number | null;
+  text?: string;
 };
 
 type Message = {
   role: "you" | "desk";
   text: string;
   quotes?: Quote[];
+  trace?: TraceStep[];
+  action?: AskAction | null;
 };
 
 type Started = {
@@ -66,7 +75,9 @@ export function PaperPanel() {
   const [focusText, setFocusText] = useState("");
   const [focusToken, setFocusToken] = useState(0);
   const [pdfOpen, setPdfOpen] = useState(false);
+  const [adding, setAdding] = useState(false);
   const threadRef = useRef<HTMLDivElement>(null);
+  const sendRef = useRef<(text?: string) => Promise<void>>(async () => {});
 
   useEffect(() => {
     let cancelled = false;
@@ -200,6 +211,7 @@ export function PaperPanel() {
         return [...current, started];
       });
       setJobId(started.job_id);
+      setAdding(false);
       setPdfOpen(false);
       setFocusPage(null);
       setFocusText("");
@@ -229,14 +241,23 @@ export function PaperPanel() {
         trace?: TraceStep[];
         action?: AskAction | null;
       };
+      const action = body.action ?? null;
       setMessages((current) => [
         ...current,
         {
           role: "desk",
           text: body.answer || "The desk could not answer that.",
           quotes: body.quotes ?? [],
+          trace: body.trace ?? [],
+          action,
         },
       ]);
+      if (action?.type === "open") {
+        setFocusPage(typeof action.page === "number" ? action.page : null);
+        setFocusText(action.text || "");
+        setFocusToken((token) => token + 1);
+        setPdfOpen(true);
+      }
     } catch {
       setMessages((current) => [
         ...current,
@@ -246,6 +267,29 @@ export function PaperPanel() {
       setBusy(false);
     }
   }
+
+  sendRef.current = send;
+
+  useEffect(() => {
+    const queued = takeChatPrompt();
+    if (queued) void sendRef.current(queued);
+    function onVoice(event: Event) {
+      const action = (event as CustomEvent<DeskVoiceAction>).detail;
+      if (!action) return;
+      if (action.type === "prompt" && action.text) {
+        takeChatPrompt();
+        void sendRef.current(action.text);
+        return;
+      }
+      if (action.type === "open" && action.job_id) {
+        setJobId(action.job_id);
+        setAdding(false);
+        setPdfOpen(true);
+      }
+    }
+    window.addEventListener("desk-voice", onVoice);
+    return () => window.removeEventListener("desk-voice", onVoice);
+  }, []);
 
   function openQuote(quote: Quote) {
     setFocusPage(typeof quote.page === "number" ? quote.page : null);
@@ -262,9 +306,26 @@ export function PaperPanel() {
     );
   }
 
-  if (!jobId) {
+  if (!jobId || adding) {
     return (
       <div className="mx-auto flex w-full max-w-md flex-1 flex-col justify-center px-6 py-16">
+        {shelf.length > 0 ? (
+          <nav aria-label="Your papers" className="mb-8 flex flex-wrap gap-2">
+            {shelf.map((item) => (
+              <button
+                key={item.job_id}
+                type="button"
+                onClick={() => {
+                  setJobId(item.job_id);
+                  setAdding(false);
+                }}
+                className="max-w-[14rem] truncate rounded-full bg-white px-3 py-1.5 text-left text-xs text-[#6b645c] ring-1 ring-[#e4dcd0]"
+              >
+                {item.title || item.arxiv_id}
+              </button>
+            ))}
+          </nav>
+        ) : null}
         <form onSubmit={onSubmit} className="flex flex-col gap-5">
           <div>
             <p className="text-[11px] tracking-[0.18em] text-[#8c3a2f]">FOR AUTHORS</p>
@@ -363,6 +424,13 @@ export function PaperPanel() {
               {running && paper.specialist ? (
                 <span className="text-[#6b645c]">pass: {paper.specialist}</span>
               ) : null}
+              <button
+                type="button"
+                onClick={() => setAdding(true)}
+                className="text-xs underline decoration-[#c4a15a] underline-offset-4"
+              >
+                Add a paper
+              </button>
             </div>
           </article>
         </div>
@@ -383,7 +451,8 @@ export function PaperPanel() {
                   </h2>
                   <p className="mt-3 max-w-md text-sm leading-6 text-[#6b645c]">
                     The thread stays on this read. Ask what failed, what passed, or what still needs
-                    a person.
+                    a person. Press V to talk. The desk can list findings, open a page, and explain a
+                    stored formula. It does not change a verdict.
                   </p>
                 </div>
               ) : (
@@ -402,9 +471,22 @@ export function PaperPanel() {
                         quotes={turn.quotes ?? []}
                         papers={[paper]}
                         citedIds={[paper.arxiv_id]}
-                        trace={[]}
+                        trace={turn.trace ?? []}
                         layout="findings"
+                        formula={turn.action?.type === "explain" ? turn.action.formula : undefined}
+                        pageAction={
+                          turn.action?.type === "open"
+                            ? {
+                                job_id: turn.action.job_id,
+                                arxiv_id: turn.action.arxiv_id,
+                                title: turn.action.title,
+                                page: turn.action.page,
+                                text: turn.action.text,
+                              }
+                            : null
+                        }
                         activeQuoteId=""
+                        activeJobId={paper.job_id}
                         onOpenQuote={(quote) => openQuote(quote)}
                         onOpenPaper={() => {
                           const issue = paper.issues[0];

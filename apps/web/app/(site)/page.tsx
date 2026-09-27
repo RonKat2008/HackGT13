@@ -44,17 +44,34 @@ export default async function HomePage() {
             </p>
             <div className="hero-actions mt-10 flex flex-wrap items-center gap-4">
               {user ? (
-                <Link href="/desk" className="rounded-full bg-[#1c1915] px-5 py-3 text-sm text-[#f4f0e6]">
-                  Open the desk
+                <Link
+                  href={user.desk === "author" ? "/author" : "/desk"}
+                  className="rounded-full bg-[#1c1915] px-5 py-3 text-sm text-[#f4f0e6]"
+                >
+                  {user.desk === "author" ? "Open your paper" : "Open the desk"}
                 </Link>
               ) : (
-                <Link href="/login" className="rounded-full bg-[#1c1915] px-5 py-3 text-sm text-[#f4f0e6]">
-                  Sign in
+                <Link href="/signup" className="rounded-full bg-[#1c1915] px-5 py-3 text-sm text-[#f4f0e6]">
+                  Create an account
                 </Link>
               )}
-              <Link href="/author" className="text-sm underline decoration-[#c4a15a] underline-offset-4">
-                For authors
-              </Link>
+              {user?.desk === "author" ? (
+                <Link href="/desk" className="text-sm underline decoration-[#c4a15a] underline-offset-4">
+                  Conference desk
+                </Link>
+              ) : (
+                <Link
+                  href={user ? "/author" : "/signup?desk=author"}
+                  className="text-sm underline decoration-[#c4a15a] underline-offset-4"
+                >
+                  For authors
+                </Link>
+              )}
+              {!user ? (
+                <Link href="/login" className="text-sm underline decoration-[#c4a15a] underline-offset-4">
+                  Sign in
+                </Link>
+              ) : null}
               <Link href="#how" className="text-sm underline decoration-[#c4a15a] underline-offset-4">
                 Watch how it works
               </Link>
@@ -103,8 +120,8 @@ export default async function HomePage() {
             <p className="font-[family-name:var(--desk-serif)] text-3xl">PreSearch</p>
             <p className="mt-2 text-sm text-[#6b645c]">Open the desk when the list is yours.</p>
           </div>
-          <Link href="/login" className="rounded-full bg-[#1c1915] px-5 py-3 text-sm text-[#f4f0e6]">
-            Sign in
+          <Link href="/signup" className="rounded-full bg-[#1c1915] px-5 py-3 text-sm text-[#f4f0e6]">
+            Create an account
           </Link>
         </div>
       </footer>

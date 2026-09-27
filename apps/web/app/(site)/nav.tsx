@@ -15,18 +15,23 @@ export async function SiteNav() {
           </Link>
           {user ? (
             <Link
-              href="/desk"
+              href={user.desk === "author" ? "/author" : "/desk"}
               className="rounded-full bg-[#1c1915] px-4 py-2 text-[#f4f0e6]"
             >
-              Open the desk
+              {user.desk === "author" ? "Open your paper" : "Open the desk"}
             </Link>
           ) : (
-            <Link
-              href="/login"
-              className="rounded-full bg-[#1c1915] px-4 py-2 text-[#f4f0e6]"
-            >
-              Sign in
-            </Link>
+            <>
+              <Link href="/login" className="text-[#6b645c]">
+                Sign in
+              </Link>
+              <Link
+                href="/signup"
+                className="rounded-full bg-[#1c1915] px-4 py-2 text-[#f4f0e6]"
+              >
+                Create an account
+              </Link>
+            </>
           )}
         </nav>
       </div>

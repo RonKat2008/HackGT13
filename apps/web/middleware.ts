@@ -53,11 +53,10 @@ export async function middleware(request: NextRequest) {
     if (path.startsWith("/author")) login.searchParams.set("next", "/author");
     return carry(supabaseResponse, NextResponse.redirect(login));
   }
-  if (path === "/signup") {
-    return carry(
-      supabaseResponse,
-      NextResponse.redirect(new URL(signedIn ? "/desk" : "/login", request.url)),
-    );
+  if (path === "/signup" && signedIn) {
+    const desk = request.nextUrl.searchParams.get("desk");
+    const dest = desk === "author" ? "/author" : "/desk";
+    return carry(supabaseResponse, NextResponse.redirect(new URL(dest, request.url)));
   }
   if (path === "/login" && signedIn) {
     const next = request.nextUrl.searchParams.get("next");

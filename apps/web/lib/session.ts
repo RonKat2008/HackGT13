@@ -2,7 +2,7 @@ import { redirect } from "next/navigation";
 import { deskFetch } from "@/lib/desk";
 import { createClient } from "@/lib/supabase/server";
 
-type DeskUser = { id: string; email: string };
+type DeskUser = { id: string; email: string; desk: "author" | "conference" | null };
 
 export async function deskUser(): Promise<DeskUser | null> {
   if (!process.env.SUPABASE_URL || !process.env.SUPABASE_PUBLISHABLE_KEY) return null;
@@ -11,13 +11,13 @@ export async function deskUser(): Promise<DeskUser | null> {
   const claims = data?.claims;
   if (error || !claims || typeof claims.sub !== "string") return null;
   const id = claims.sub;
-  let email = typeof claims.email === "string" ? claims.email : "";
-  if (!email) {
-    const { data: userData } = await supabase.auth.getUser();
-    email = userData.user?.email ?? "";
-  }
+  const { data: userData } = await supabase.auth.getUser();
+  const email =
+    (typeof claims.email === "string" ? claims.email : "") || userData.user?.email || "";
   if (!email) return null;
-  return { id, email };
+  const saved = userData.user?.user_metadata?.desk;
+  const desk = saved === "author" || saved === "conference" ? saved : null;
+  return { id, email, desk };
 }
 
 export async function requireDeskUser(): Promise<DeskUser> {

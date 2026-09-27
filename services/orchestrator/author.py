@@ -25,15 +25,17 @@ SHELF_NAME = "Author shelf"
 SHELF_EMAIL = "author@arxaudit.local"
 
 AUTHOR_PROMPT = """You answer one author about one paper of theirs.
-Use only that paper's stored text, issues, and claims you are given.
-You may use a few paragraphs when the author needs detail.
+Use only that paper's stored text, the issue list, and the stored claims you are given.
+You can list findings, point at a page, and explain a stored formula.
+You cannot change a verdict. If asked, say the desk does not change a verdict from chat.
 Talk about unresolved citations, missing numbers, unsupported claims, and failed reruns.
 A sentence that needs a person was left unsure. Leave it that way.
 Stay with the stored citation, number, formula, and passage.
-You cannot change a verdict. If asked, say the desk does not change a verdict from chat.
 Do not say fake, fraudulent, fabricated, or AI-written.
 If the paper status is queued or running, say the read has not finished.
 Quote a short span when you point at a problem.
+Mention each finding once. Do not repeat the same citation, number, or claim.
+Keep the reply to a few sentences the author can use.
 """
 
 _REFUSE_SENTENCE = (
@@ -256,7 +258,7 @@ def list_author_messages(job_id: str) -> dict[str, list[dict[str, Any]]]:
         _tables(conn)
         rows = conn.execute(
             """
-            SELECT role, body, quotes_json
+            SELECT role, body, quotes_json, trace_json
             FROM author_messages
             WHERE job_id = ?
             ORDER BY position ASC
@@ -268,8 +270,11 @@ def list_author_messages(job_id: str) -> dict[str, list[dict[str, Any]]]:
         message: dict[str, Any] = {"role": item["role"], "text": item["body"]}
         if item["role"] == "desk":
             quotes = json.loads(item["quotes_json"] or "[]")
+            trace = json.loads(item["trace_json"] or "[]")
             if quotes:
                 message["quotes"] = quotes
+            if trace:
+                message["trace"] = trace
         messages.append(message)
     return {"messages": messages}
 
@@ -333,16 +338,19 @@ def _author_grok(
 
 def _author_local(paper: dict[str, Any]) -> str:
     status = str(paper.get("status") or "")
-    if status in {"queued", "running"}:
-        return "The read has not finished yet. Ask again when the stored read is ready."
     issues = paper.get("issues") or []
     label = paper.get("title") or paper.get("arxiv_id") or "This paper"
+    ident = paper.get("arxiv_id") or ""
+    if status in {"queued", "running"}:
+        if status == "queued":
+            return f"{label} ({ident}) is still queued."
+        return "The read has not finished yet. Ask again when the stored read is ready."
     if not paper.get("paper_text") and not issues:
-        return f"{label} has no stored read yet. The read has not finished."
+        return f"{label} ({ident}) is still queued."
     if not issues:
-        return f"{label} has nothing to report from the stored issues."
+        return f"{label} ({ident}) has nothing to report."
     lines = [
-        f"{label} {issue['issue_type']}: {issue['reason']}"
+        f"{label} ({ident}) {issue['issue_type']}: {issue['reason']}"
         for issue in issues
     ]
     return "\n".join(lines)
