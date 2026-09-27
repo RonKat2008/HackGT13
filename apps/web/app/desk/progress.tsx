@@ -8,6 +8,7 @@ import {
   type ConferenceDesk,
   type ConferenceProgress,
   type Paper,
+  type ThroughputMetrics,
 } from "@/lib/desk";
 import type { DeskVoiceAction } from "./voice-action";
 import {
@@ -49,6 +50,18 @@ export function conferenceProgressFromPapers(papers: Paper[]): ConferenceProgres
 export function conferenceProgressLine(progress?: ConferenceProgress, papers: Paper[] = []): string {
   const counts = progress ?? conferenceProgressFromPapers(papers);
   return `${counts.papers_done} complete · ${counts.papers_with_findings} with findings · ${counts.papers_running} running`;
+}
+
+export function conferenceThroughputLine(metrics?: ThroughputMetrics | null): string | null {
+  if (!metrics) return null;
+  const hits = metrics.citation_cache_hits;
+  const misses = metrics.citation_cache_misses;
+  if (metrics.resolved_lya === 0 && metrics.escalated_jev === 0 && hits === 0 && misses === 0) {
+    return null;
+  }
+  const total = hits + misses;
+  const percent = total === 0 ? 0 : Math.round((100 * hits) / total);
+  return `Lya settled ${metrics.resolved_lya} · Jev opened ${metrics.escalated_jev} · citation cache hit ${percent}%`;
 }
 
 export function conferenceQueueActive(papers: Paper[], progress?: ConferenceProgress): boolean {
@@ -95,6 +108,34 @@ export function useConferenceDesk(
   }, [conferenceId, moving, example]);
 
   return { papers, progress };
+}
+
+function useDeskMetrics(conferenceId: string, papers: Paper[], progress?: ConferenceProgress) {
+  const [metrics, setMetrics] = useState<ThroughputMetrics | null>(null);
+  const moving = conferenceQueueActive(papers, progress);
+
+  useEffect(() => {
+    let cancelled = false;
+    async function load() {
+      const response = await fetch(`/api/desk/metrics?conference_id=${encodeURIComponent(conferenceId)}`);
+      if (!response.ok || cancelled) return;
+      const body = (await response.json()) as ThroughputMetrics;
+      if (!cancelled) setMetrics(body);
+    }
+    void load();
+    if (!moving) {
+      return () => {
+        cancelled = true;
+      };
+    }
+    const timer = setInterval(load, POLL_MS);
+    return () => {
+      cancelled = true;
+      clearInterval(timer);
+    };
+  }, [conferenceId, moving]);
+
+  return metrics;
 }
 
 function titleOf(paper: Paper): string {
@@ -151,7 +192,9 @@ export function DeskViews({
   const router = useRouter();
   const [view, setView] = useState<"chat" | "summary">(example || initialView === "summary" ? "summary" : "chat");
   const { papers, progress } = useConferenceDesk(conferenceId, initial, initialProgress, example);
+  const metrics = useDeskMetrics(conferenceId, papers, progress);
   const counts = conferenceProgressLine(progress, papers);
+  const throughput = conferenceThroughputLine(metrics);
 
   useEffect(() => {
     function onVoice(event: Event) {
@@ -177,7 +220,10 @@ export function DeskViews({
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-      <p className="shrink-0 px-4 pt-3 text-[11px] text-[#6b645c]">{counts}</p>
+      <div className="shrink-0 px-4 pt-3">
+        <p className="text-[11px] text-[#6b645c]">{counts}</p>
+        {throughput ? <p className="text-[11px] text-[#6b645c]">{throughput}</p> : null}
+      </div>
       <div role="tablist" aria-label="Desk view" className="flex shrink-0 items-end gap-1 border-b border-[#e4dcd0] px-4">
         <TabButton id="chat" selected={view === "chat"} onSelect={() => selectView("chat")}>
           Chat
@@ -227,7 +273,14 @@ export function ConferenceCount({
   example?: boolean;
 }) {
   const { papers, progress } = useConferenceDesk(conferenceId, initialPapers, initialProgress, example);
-  return <p className="mt-1 text-[11px] text-[#6b645c]">{conferenceProgressLine(progress, papers)}</p>;
+  const metrics = useDeskMetrics(conferenceId, papers, progress);
+  const throughput = conferenceThroughputLine(metrics);
+  return (
+    <div className="mt-1">
+      <p className="text-[11px] text-[#6b645c]">{conferenceProgressLine(progress, papers)}</p>
+      {throughput ? <p className="text-[11px] text-[#6b645c]">{throughput}</p> : null}
+    </div>
+  );
 }
 
 export function PaperRows({
