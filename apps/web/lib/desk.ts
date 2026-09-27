@@ -182,6 +182,42 @@ export const EMPTY_SUMMARY: Summary = {
   },
 };
 
+export type PaperProgress = {
+  parsed: boolean;
+  claims_total: number;
+  claims_done: number;
+  findings_so_far: number;
+  lya_done: number;
+  jev_running: number;
+  phase: "parse" | "checks" | "lya" | "jev" | "done";
+};
+
+export type ConferenceProgress = {
+  papers_total: number;
+  papers_done: number;
+  papers_with_findings: number;
+  papers_running: number;
+  papers_queued: number;
+};
+
+export type ThroughputMetrics = {
+  conference_id: string;
+  papers: number;
+  claims: number;
+  resolved_deterministic: number;
+  resolved_lya: number;
+  escalated_jev: number;
+  avg_jev_rounds: number;
+  citation_cache_hits: number;
+  citation_cache_misses: number;
+  paper_cache_hits: number;
+  paper_cache_misses: number;
+  lya_batches: number;
+  claims_per_lya_batch: number;
+  time_to_first_finding_ms: number | null;
+  median_paper_ms: number | null;
+};
+
 export type Paper = {
   job_id: string;
   arxiv_id: string;
@@ -200,6 +236,7 @@ export type Paper = {
   events: JobEvent[];
   neighbors?: ShelfNeighbor[];
   kaggle?: KaggleRun | null;
+  progress?: PaperProgress;
 };
 
 export type ConferenceDesk = {
@@ -208,4 +245,5 @@ export type ConferenceDesk = {
   contact_email: string;
   running: boolean;
   papers: Paper[];
+  progress?: ConferenceProgress;
 };

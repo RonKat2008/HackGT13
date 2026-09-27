@@ -1,0 +1,35 @@
+{
+  "paper": {
+    "parsed": true,
+    "claims_total": 40,
+    "claims_done": 28,
+    "findings_so_far": 3,
+    "lya_done": 22,
+    "jev_running": 2,
+    "phase": "jev"
+  },
+  "conference": {
+    "papers_total": 8,
+    "papers_done": 3,
+    "papers_with_findings": 2,
+    "papers_running": 2,
+    "papers_queued": 3
+  },
+  "metrics": {
+    "conference_id": "conf_demo_001",
+    "papers": 8,
+    "claims": 214,
+    "resolved_deterministic": 41,
+    "resolved_lya": 62,
+    "escalated_jev": 15,
+    "avg_jev_rounds": 1.8,
+    "citation_cache_hits": 24,
+    "citation_cache_misses": 9,
+    "paper_cache_hits": 1,
+    "paper_cache_misses": 2,
+    "lya_batches": 5,
+    "claims_per_lya_batch": 12,
+    "time_to_first_finding_ms": 18400,
+    "median_paper_ms": 142000
+  }
+}
