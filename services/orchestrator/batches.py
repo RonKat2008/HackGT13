@@ -462,46 +462,50 @@ def _apply_jev(issues: list[dict[str, Any]]) -> None:
             issue["jev_label"] = label
 
 
-def _process_job(conn: Any, batch_id: str, arxiv_id: str, position: int) -> None:
+def _process_job(batch_id: str, arxiv_id: str, position: int) -> None:
     job_id = str(uuid4())
     run_id = str(uuid4())
     try:
         path, author_name = resolve_paper(arxiv_id)
     except PaperLoadError:
+        with _db() as conn:
+            _insert_job(
+                conn,
+                job_id=job_id,
+                batch_id=batch_id,
+                arxiv_id=arxiv_id,
+                run_id=run_id,
+                status="error",
+                specialist=None,
+                fitness=0.0,
+                issue_count=0,
+                author_name=None,
+                position=position,
+            )
+            conn.commit()
+        return
+
+    result = paper_audit.audit_paper(path, job_id)
+    issues = list(result.get("issues") or [])
+    _apply_jev(issues)
+    contradicted = bool(issues)
+    with _db() as conn:
+        _persist_events(conn, job_id, list(result.get("events") or []))
+        _persist_issues(conn, job_id, issues)
         _insert_job(
             conn,
             job_id=job_id,
             batch_id=batch_id,
             arxiv_id=arxiv_id,
             run_id=run_id,
-            status="error",
-            specialist=None,
-            fitness=0.0,
-            issue_count=0,
-            author_name=None,
+            status="contradicted" if contradicted else "passed",
+            specialist="stamp",
+            fitness=0.0 if contradicted else 1.0,
+            issue_count=len(issues),
+            author_name=author_name,
             position=position,
         )
-        return
-
-    result = paper_audit.audit_paper(path, job_id)
-    issues = list(result.get("issues") or [])
-    _apply_jev(issues)
-    _persist_events(conn, job_id, list(result.get("events") or []))
-    _persist_issues(conn, job_id, issues)
-    contradicted = bool(issues)
-    _insert_job(
-        conn,
-        job_id=job_id,
-        batch_id=batch_id,
-        arxiv_id=arxiv_id,
-        run_id=run_id,
-        status="contradicted" if contradicted else "passed",
-        specialist="stamp",
-        fitness=0.0 if contradicted else 1.0,
-        issue_count=len(issues),
-        author_name=author_name,
-        position=position,
-    )
+        conn.commit()
 
 
 def create_batch(payload: dict[str, Any]) -> dict[str, Any]:
@@ -541,9 +545,9 @@ def create_batch(payload: dict[str, Any]) -> dict[str, Any]:
             ),
         )
         conn.commit()
-        for position, arxiv_id in enumerate(arxiv_ids):
-            _process_job(conn, batch_id, str(arxiv_id), position)
-        conn.commit()
+    for position, arxiv_id in enumerate(arxiv_ids):
+        _process_job(batch_id, str(arxiv_id), position)
+    with _db() as conn:
         return _read_batch(conn, batch_id)
 
 
