@@ -92,6 +92,92 @@ def test_demo_paper_reproduces_342_and_misses_317(tmp_path: Path, monkeypatch: p
     assert "code" not in reproduced
 
 
+def test_three_titanic_claims_load_the_csv_once(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    _titanic_csv(tmp_path)
+    monkeypatch.setattr(repro, "DOWNLOADS", tmp_path)
+    monkeypatch.setattr(repro, "download_table", lambda *_args: None)
+    calls = {"n": 0}
+    real_load = repro._load_table
+
+    def counting_load(path: Path) -> pd.DataFrame:
+        calls["n"] += 1
+        return real_load(path)
+
+    monkeypatch.setattr(repro, "_load_table", counting_load)
+    claims = [
+        {"text": "The Titanic table contains 891 passengers.", "claim_id": "rows"},
+        {"text": "Of the 891 passengers, 342 survived.", "claim_id": "survived"},
+        {"text": "317 passengers travelled in first class.", "claim_id": "first-class"},
+    ]
+    sections = _sections(
+        "We evaluate on the Titanic passenger dataset (Kaggle, yasserh/titanic-dataset)."
+    )
+    result = repro.reproduce(claims, sections, model=lambda _prompt: None)
+    assert calls["n"] == 1
+    by_check = {(item["formula"], item["expected"]): item for item in result}
+    assert by_check[("ROWS()", 891)]["status"] == "reproduced"
+    assert by_check[("ROWS()", 891)]["actual"] == 891
+    assert by_check[("COUNT_EQ(Survived, 1)", 342)]["status"] == "reproduced"
+    assert by_check[("COUNT_EQ(Survived, 1)", 342)]["actual"] == 342
+    missed = by_check[("COUNT_EQ(Pclass, 1)", 317)]
+    assert missed["status"] == "could_not_reproduce"
+    assert missed["actual"] == 216
+    assert missed["expected"] == 317
+    assert all("code" not in item for item in result)
+
+
+def test_titanic_run_records_timing_and_cache_hit(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _titanic_csv(tmp_path)
+    monkeypatch.setattr(repro, "DOWNLOADS", tmp_path)
+    monkeypatch.setattr(repro, "download_table", lambda *_args: None)
+    monkeypatch.setenv("RUN_DB", str(tmp_path / "repro-timing.sqlite"))
+    claims = [
+        {"text": "Of the 891 passengers, 342 survived.", "claim_id": "survived"},
+        {"text": "317 passengers travelled in first class.", "claim_id": "first-class"},
+    ]
+    sections = _sections(
+        "We evaluate on the Titanic passenger dataset (Kaggle, yasserh/titanic-dataset)."
+    )
+    first = repro.reproduce(claims, sections, model=lambda _prompt: None)
+    by_check = {(item["formula"], item["expected"]): item for item in first}
+    survived = by_check[("COUNT_EQ(Survived, 1)", 342)]
+    missed = by_check[("COUNT_EQ(Pclass, 1)", 317)]
+    assert survived["status"] == "reproduced"
+    assert survived["actual"] == 342
+    assert missed["status"] == "could_not_reproduce"
+    assert missed["actual"] == 216
+    assert missed["expected"] == 317
+    timing_keys = (
+        "dataset_resolution_ms",
+        "dataset_load_ms",
+        "execution_ms",
+        "comparison_ms",
+    )
+    for item in first:
+        for key in timing_keys:
+            assert type(item[key]) is int
+            assert item[key] >= 0
+        assert type(item["cache_hit"]) is bool
+        assert item["cache_hit"] is False
+        assert "trust_score" not in item
+        assert "code" not in item
+
+    second = repro.reproduce(claims, sections, model=lambda _prompt: None)
+    cached = {(item["formula"], item["expected"]): item for item in second}
+    cached_survived = cached[("COUNT_EQ(Survived, 1)", 342)]
+    cached_missed = cached[("COUNT_EQ(Pclass, 1)", 317)]
+    assert cached_survived["cache_hit"] is True
+    assert cached_survived["actual"] == 342
+    assert cached_missed["cache_hit"] is True
+    assert cached_missed["actual"] == 216
+    for item in (cached_survived, cached_missed):
+        for key in timing_keys:
+            assert type(item[key]) is int
+            assert item[key] >= 0
+
+
 def test_kernel_push_stays_off_unless_asked(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     _titanic_csv(tmp_path)
     monkeypatch.setattr(repro, "DOWNLOADS", tmp_path)
@@ -183,6 +269,110 @@ def test_samples_sentence_does_not_call_grok_or_kaggle(monkeypatch: pytest.Monke
         ),
     )
     assert result == []
+
+
+def test_settled_claim_does_not_download_a_public_table(monkeypatch: pytest.MonkeyPatch) -> None:
+    def boom(*_args: object, **_kwargs: object) -> None:
+        raise AssertionError("acquire_table or download_table")
+
+    monkeypatch.setattr(repro, "download_table", boom)
+    import datasets
+
+    monkeypatch.setattr(datasets, "acquire_table", boom)
+    result = repro.reproduce(
+        [
+            {
+                "text": (
+                    "Our method improves performance by 7.8 percentage points "
+                    "over the strongest baseline on yasserh/titanic-dataset."
+                ),
+                "verdict": "contradicted",
+            }
+        ],
+        _sections(""),
+        model=lambda _prompt: None,
+    )
+    assert result == [] or all(
+        item.get("status") == "could_not_run" and "NOT_REQUIRED" in str(item.get("log") or "")
+        for item in result
+    )
+    assert all(item.get("status") != "reproduced" for item in result)
+    assert all(item.get("actual") is None for item in result)
+
+
+def test_independent_dataset_groups_run_in_parallel(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import threading
+
+    import datasets
+
+    titanic = _titanic_csv(tmp_path)
+    other = tmp_path / "other.csv"
+    pd.DataFrame({"n": list(range(10))}).to_csv(other, index=False)
+    monkeypatch.setenv("REPRO_WORKERS", "2")
+
+    def fake_resolve(text: str, specs=None, **_kwargs):
+        sentence = text.split("\n", 1)[0]
+        if "yasserh/titanic-dataset" in sentence or "titanic" in sentence.lower():
+            return {
+                "resolution": "match",
+                "dataset_slug": "yasserh/titanic-dataset",
+                "steps": ["Identified dataset", "Resolved exact dataset"],
+                "log": "Resolved exact dataset",
+            }
+        if "demo/other" in sentence:
+            return {
+                "resolution": "match",
+                "dataset_slug": "demo/other",
+                "steps": ["Identified dataset", "Resolved exact dataset"],
+                "log": "Resolved exact dataset",
+            }
+        return {"resolution": "not_found", "dataset_slug": "", "steps": [], "log": ""}
+
+    def fake_acquire(slug: str, file_name: str = "", **_kwargs):
+        if slug == "yasserh/titanic-dataset":
+            return titanic
+        if slug == "demo/other":
+            return other
+        return None
+
+    monkeypatch.setattr(datasets, "resolve", fake_resolve)
+    monkeypatch.setattr(datasets, "acquire_table", fake_acquire)
+
+    second_started = threading.Event()
+    real_execute = repro.ReproductionContext.execute
+
+    def latched_execute(self, spec, table):
+        slug = next((name for name, frame in self.frames.items() if frame is table), "")
+        if slug == "yasserh/titanic-dataset":
+            if not second_started.wait(timeout=5):
+                raise AssertionError("second group did not start while first was blocked")
+        else:
+            second_started.set()
+        return real_execute(self, spec, table)
+
+    monkeypatch.setattr(repro.ReproductionContext, "execute", latched_execute)
+    claims = [
+        {
+            "text": "The Titanic table on yasserh/titanic-dataset contains 891 passengers.",
+            "claim_id": "titanic-rows",
+        },
+        {
+            "text": "The Kaggle dataset demo/other table contains 10 rows.",
+            "claim_id": "other-rows",
+        },
+    ]
+    result = repro.reproduce(claims, _sections(""), model=lambda _prompt: None)
+    assert second_started.is_set()
+    assert [item["dataset_slug"] for item in result] == [
+        "yasserh/titanic-dataset",
+        "demo/other",
+    ]
+    assert result[0]["status"] == "reproduced"
+    assert result[0]["actual"] == 891
+    assert result[1]["status"] == "reproduced"
+    assert result[1]["actual"] == 10
 
 
 def test_unknown_kaggle_slug_does_not_download(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

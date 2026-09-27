@@ -52,6 +52,18 @@ TableDownloader = Callable[[str, str], Path | None]
 # One list call per slug for this process, including a timeout or an empty result.
 _LOOKUP_CACHE: dict[str, list[dict[str, Any]]] = {}
 _KAGGLE_WORD = re.compile(r"\bkaggle\b", re.I)
+REPRO_ENGINE = "repro-1"
+_CACHEABLE_STATUSES = frozenset({"reproduced", "could_not_reproduce"})
+_SPEC_HASH_FIELDS = (
+    "dataset_id",
+    "file_id",
+    "operation",
+    "column",
+    "filters",
+    "arguments",
+    "expected",
+    "comparison",
+)
 
 
 def _normalize_slug(slug: str) -> str:
@@ -69,7 +81,103 @@ def _connect() -> sqlite3.Connection:
         )
         """
     )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS repro_cache (
+            cache_key TEXT PRIMARY KEY,
+            actual_json TEXT NOT NULL,
+            status TEXT NOT NULL,
+            created_at TEXT NOT NULL
+        )
+        """
+    )
     return conn
+
+
+def _csv_header_columns(path: Path) -> list[str]:
+    with path.open(newline="", encoding="utf-8") as handle:
+        row = next(csv.reader(handle), [])
+    return [str(name).strip() for name in row]
+
+
+def fingerprint_table(slug: str, path: Path) -> str | None:
+    """Identify a local CSV by slug, size, mtime, and header columns only."""
+    try:
+        if not path.is_file():
+            return None
+        stat = path.stat()
+        columns = _csv_header_columns(path)
+    except OSError:
+        return None
+    raw = json.dumps(
+        {
+            "slug": _normalize_slug(slug),
+            "size": stat.st_size,
+            "mtime_ns": stat.st_mtime_ns,
+            "columns": columns,
+        },
+        separators=(",", ":"),
+    )
+    return hashlib.sha256(raw.encode()).hexdigest()
+
+
+def repro_spec_hash(spec: Any) -> str:
+    if hasattr(spec, "model_dump"):
+        payload = spec.model_dump(mode="json")
+    elif isinstance(spec, dict):
+        payload = spec
+    else:
+        raise TypeError("spec must be a ReproSpec")
+    body = {key: payload.get(key) for key in _SPEC_HASH_FIELDS}
+    return hashlib.sha256(
+        json.dumps(body, sort_keys=True, separators=(",", ":"), default=str).encode()
+    ).hexdigest()
+
+
+def repro_result_key(fingerprint: str, spec_digest: str) -> str:
+    body = f"{fingerprint}\n{spec_digest}\n{REPRO_ENGINE}"
+    return hashlib.sha256(body.encode()).hexdigest()
+
+
+def lookup_repro_result(cache_key: str) -> dict[str, Any] | None:
+    if not cache_key:
+        return None
+    conn = _connect()
+    try:
+        row = conn.execute(
+            "SELECT actual_json, status FROM repro_cache WHERE cache_key = ?",
+            (cache_key,),
+        ).fetchone()
+    finally:
+        conn.close()
+    if row is None:
+        return None
+    try:
+        actual = json.loads(row["actual_json"])
+    except (TypeError, json.JSONDecodeError):
+        return None
+    return {"actual": actual, "status": str(row["status"])}
+
+
+def remember_repro_result(cache_key: str, actual: Any, status: str) -> None:
+    if not cache_key or status not in _CACHEABLE_STATUSES:
+        return
+    conn = _connect()
+    try:
+        conn.execute(
+            """
+            INSERT INTO repro_cache (cache_key, actual_json, status, created_at)
+            VALUES (?, ?, ?, ?)
+            ON CONFLICT(cache_key) DO UPDATE SET
+                actual_json = excluded.actual_json,
+                status = excluded.status,
+                created_at = excluded.created_at
+            """,
+            (cache_key, json.dumps(actual), status, datetime.now(timezone.utc).isoformat()),
+        )
+        conn.commit()
+    finally:
+        conn.close()
 
 
 def _under_download_roots(path: Path, slug: str) -> bool:

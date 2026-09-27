@@ -17,6 +17,7 @@ import subprocess
 import sys
 import tempfile
 import time
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any, Callable
 
@@ -43,6 +44,14 @@ _SLUG_OK = re.compile(r"^[a-z0-9][a-z0-9_-]*/[a-z0-9][a-z0-9_-]*$")
 _COLUMN_OK = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 _OPS = {"rows", "sum", "mean", "count_eq"}
 KNOWN_DATASETS = {"titanic": "yasserh/titanic-dataset"}
+SETTLED_VERDICTS = frozenset(
+    {"contradicted", "supported", "reproduced", "could_not_reproduce"}
+)
+
+
+def already_settled(claim: dict[str, Any]) -> bool:
+    """True when numbers/tables already locked this claim. Do not download for it."""
+    return str(claim.get("verdict") or "") in SETTLED_VERDICTS
 
 REPRO_PROMPT = """You are the reproduction worker for one paper.
 Propose a table check only when the paper names a public Kaggle dataset as owner/name and states a count, sum, or mean on that table.
@@ -633,11 +642,26 @@ def _dataset_sentences(claims: list[dict[str, Any]], sections: dict[str, str]) -
         sentences.append(cleaned)
 
     for claim in claims:
+        if already_settled(claim):
+            continue
         add(str(claim.get("text") or ""))
     for name in ("abstract", "methods", "results"):
         for part in re.split(r"(?<=[.!?])\s+", sections.get(name) or ""):
+            if _tied_to_settled(part, claims):
+                continue
             add(part)
     return sentences
+
+
+def _tied_to_settled(sentence: str, claims: list[dict[str, Any]]) -> bool:
+    cleaned = " ".join(sentence.split()).strip()
+    for claim in claims:
+        if not already_settled(claim):
+            continue
+        text = " ".join(str(claim.get("text") or "").split()).strip()
+        if text and (text in cleaned or cleaned in text):
+            return True
+    return False
 
 
 def _claim_id_for(sentence: str, claims: list[dict[str, Any]]) -> str:
@@ -650,6 +674,293 @@ def _claim_id_for(sentence: str, claims: list[dict[str, Any]]) -> str:
     return hashlib.sha1(sentence.encode()).hexdigest()[:12]
 
 
+def _load_table(path: Path) -> Any:
+    import pandas as pd
+
+    return pd.read_csv(path)
+
+
+class ReproductionContext:
+    """Loaded tables keyed by dataset slug. One frame per slug.
+
+    Prefers DuckDB when the package imports. Pandas ``dsl.execute`` is the
+    fallback if DuckDB is missing.
+    """
+
+    def __init__(self) -> None:
+        self.frames: dict[str, Any] = {}
+        try:
+            import duckdb  # noqa: F401
+
+            self._engine = "duckdb"
+        except ImportError:
+            self._engine = "pandas"
+
+    def put(self, slug: str, frame: Any) -> None:
+        self.frames[slug] = frame
+
+    def get(self, slug: str) -> Any | None:
+        return self.frames.get(slug)
+
+    def execute(self, spec: Any, table: Any) -> dict[str, Any]:
+        if self._engine == "duckdb":
+            import duck_repro
+
+            return duck_repro.execute(spec, table)
+        import dsl
+
+        return dsl.execute(spec, table)
+
+
+def _repro_workers() -> int:
+    raw = os.environ.get("REPRO_WORKERS", "2").strip()
+    try:
+        n = int(raw)
+    except ValueError:
+        n = 2
+    return max(1, min(n, 4))
+
+
+def _elapsed_ms(started: float) -> int:
+    return max(0, int((time.perf_counter() - started) * 1000))
+
+
+def _timing_fields(
+    *,
+    dataset_resolution_ms: int = 0,
+    dataset_load_ms: int = 0,
+    execution_ms: int = 0,
+    comparison_ms: int = 0,
+    cache_hit: bool = False,
+) -> dict[str, Any]:
+    return {
+        "dataset_resolution_ms": int(dataset_resolution_ms),
+        "dataset_load_ms": int(dataset_load_ms),
+        "execution_ms": int(execution_ms),
+        "comparison_ms": int(comparison_ms),
+        "cache_hit": bool(cache_hit),
+    }
+
+
+def _compare(spec: Any, actual: Any) -> bool:
+    from dsl import within
+
+    if actual is None or getattr(spec, "expected", None) is None:
+        return False
+    return within(actual, spec.expected, spec)
+
+
+def _base_computation(item: dict[str, Any], claims: list[dict[str, Any]]) -> dict[str, Any]:
+    from dsl import formula
+
+    sentence = item["sentence"]
+    resolved = item["resolved"]
+    slug = item["slug"]
+    primary = item["primary"]
+    return {
+        "claim_id": _claim_id_for(sentence, claims),
+        "dataset_slug": slug,
+        "resolution": resolved.get("resolution") or "not_found",
+        "spec": primary.model_dump(mode="json"),
+        "actual": None,
+        "expected": primary.expected,
+        "status": "could_not_run",
+        "steps": list(item["steps"]),
+        "log": "dataset not available on this machine",
+        "formula": formula(primary),
+        **_timing_fields(
+            dataset_resolution_ms=item.get("dataset_resolution_ms") or 0,
+        ),
+    }
+
+
+def _cached_outcome(spec: Any, cached: dict[str, Any]) -> dict[str, Any]:
+    from dsl import formula
+
+    expression = formula(spec)
+    actual = cached["actual"]
+    status = cached["status"]
+    return {
+        "actual": actual,
+        "expected": spec.expected,
+        "status": status,
+        "formula": expression,
+        "steps": [f"{expression} = {actual}"],
+        "log": "reproduced" if status == "reproduced" else f"computed {actual}, claimed {spec.expected}",
+    }
+
+
+def _lookup_or_execute(
+    spec: Any,
+    frame: Any,
+    *,
+    table: Path,
+    slug: str,
+    claim_id: str,
+    sentence: str,
+    ctx: ReproductionContext,
+) -> dict[str, Any]:
+    import datasets
+    from repro_spec import from_spec
+
+    cache_key = ""
+    try:
+        fingerprint = datasets.fingerprint_table(slug, table)
+        if fingerprint:
+            wrapped = from_spec(spec, claim_id, slug, sentence=sentence)
+            cache_key = datasets.repro_result_key(
+                fingerprint, datasets.repro_spec_hash(wrapped)
+            )
+    except (OSError, TypeError, ValueError):
+        cache_key = ""
+    if cache_key:
+        cached = datasets.lookup_repro_result(cache_key)
+        if cached is not None:
+            outcome = _cached_outcome(spec, cached)
+            outcome.update(_timing_fields(cache_hit=True))
+            return outcome
+    started = time.perf_counter()
+    outcome = ctx.execute(spec, frame)
+    execution_ms = _elapsed_ms(started)
+    started = time.perf_counter()
+    _compare(spec, outcome.get("actual"))
+    comparison_ms = _elapsed_ms(started)
+    if cache_key:
+        datasets.remember_repro_result(
+            cache_key, outcome.get("actual"), str(outcome.get("status") or "")
+        )
+    outcome.update(
+        _timing_fields(
+            execution_ms=execution_ms,
+            comparison_ms=comparison_ms,
+            cache_hit=False,
+        )
+    )
+    return outcome
+
+
+def _execute_matched_item(
+    item: dict[str, Any],
+    claims: list[dict[str, Any]],
+    *,
+    table: Any,
+    frame: Any,
+    ctx: ReproductionContext,
+    pusher: Pusher | None,
+    load_ms: int = 0,
+) -> dict[str, Any]:
+    from dsl import Spec, formula
+
+    sentence = item["sentence"]
+    specs = item["specs"]
+    slug = item["slug"]
+    primary = item["primary"]
+    base = _base_computation(item, claims)
+    base["dataset_load_ms"] = int(load_ms)
+    steps = list(base["steps"])
+    if table is None:
+        return base
+    steps.append("Downloaded source data")
+    if frame is None:
+        base["steps"] = steps
+        base["log"] = "dataset not available on this machine"
+        return base
+    outcomes = []
+    execution_ms = 0
+    comparison_ms = 0
+    cache_hits: list[bool] = []
+    for spec in specs:
+        if not isinstance(spec, Spec):
+            continue
+        outcome = _lookup_or_execute(
+            spec,
+            frame,
+            table=table,
+            slug=slug,
+            claim_id=str(base["claim_id"]),
+            sentence=sentence,
+            ctx=ctx,
+        )
+        outcomes.append(outcome)
+        execution_ms += int(outcome.get("execution_ms") or 0)
+        comparison_ms += int(outcome.get("comparison_ms") or 0)
+        cache_hits.append(bool(outcome.get("cache_hit")))
+        steps.append(f"Executed {spec.operation.value}")
+        if outcome["status"] == "reproduced":
+            steps.append(f"Reproduced: {outcome['actual']}")
+        elif outcome["status"] == "could_not_reproduce":
+            steps.append(f"Computed {outcome['actual']}, claimed {outcome['expected']}")
+    chosen = next(
+        (row for row in outcomes if row.get("status") == "could_not_reproduce"),
+        next(
+            (row for row in outcomes if row.get("formula") == formula(primary)),
+            outcomes[-1] if outcomes else None,
+        ),
+    )
+    if chosen is None:
+        return base
+    base.update(
+        {
+            "actual": chosen.get("actual"),
+            "expected": chosen.get("expected"),
+            "status": chosen.get("status") or "could_not_run",
+            "formula": chosen.get("formula") or formula(primary),
+            "log": chosen.get("log") or "",
+            "steps": steps,
+            "execution_ms": execution_ms,
+            "comparison_ms": comparison_ms,
+            "cache_hit": bool(cache_hits) and all(cache_hits),
+        }
+    )
+    if os.environ.get("ARX_KAGGLE_KERNEL") == "1":
+        sender = pusher if pusher is not None else push_kernel
+        try:
+            sender({"dataset_slug": slug, "claim_text": sentence, "checks": [], "file_name": ""})
+        except Exception:
+            pass
+    return base
+
+
+def _execute_slug_group(
+    slug: str,
+    indexed_items: list[tuple[int, dict[str, Any]]],
+    claims: list[dict[str, Any]],
+    pusher: Pusher | None,
+) -> list[tuple[int, dict[str, Any]]]:
+    """Acquire, load, and execute every spec for one slug on this worker."""
+    import datasets
+
+    ctx = ReproductionContext()
+    table = datasets.acquire_table(slug, "")
+    frame = None
+    load_ms = 0
+    if table is not None:
+        started = time.perf_counter()
+        try:
+            frame = _load_table(table)
+            ctx.put(slug, frame)
+        except (OSError, ValueError):
+            frame = None
+        load_ms = _elapsed_ms(started)
+    results: list[tuple[int, dict[str, Any]]] = []
+    for index, item in indexed_items:
+        results.append(
+            (
+                index,
+                _execute_matched_item(
+                    item,
+                    claims,
+                    table=table,
+                    frame=frame,
+                    ctx=ctx,
+                    pusher=pusher,
+                    load_ms=load_ms,
+                ),
+            )
+        )
+    return results
+
+
 def reproduce(
     claims: list[dict[str, Any]],
     sections: dict[str, str],
@@ -657,12 +968,9 @@ def reproduce(
     model: Model | None = None,
     pusher: Pusher | None = None,
 ) -> list[dict[str, Any]]:
-    """Compile each dataset sentence, resolve one table, and execute the DSL locally."""
+    """Compile eligible claims, then execute each matched slug group on a worker."""
     import compiler
     import datasets
-    import dsl
-    import pandas as pd
-    from dsl import Spec, formula
 
     context = "\n".join(sections.get(name) or "" for name in ("methods", "results", "abstract"))
     mentioned = "\n".join(
@@ -670,81 +978,56 @@ def reproduce(
     )
     if not datasets.names_public_table(mentioned):
         return []
-    computations: list[dict[str, Any]] = []
-    acquired: dict[str, Any] = {}
     ask = model if model is not None else (lambda _text: None)
+    prepared: list[dict[str, Any]] = []
     for sentence in _dataset_sentences(claims, sections):
+        if _tied_to_settled(sentence, claims):
+            continue
         specs = compiler.compile_claim(sentence, ask=ask)
         if not specs:
             continue
+        started = time.perf_counter()
         resolved = datasets.resolve(f"{sentence}\n{context}", specs)
-        steps = ["Located claim", *list(resolved.get("steps") or [])]
+        resolution_ms = _elapsed_ms(started)
         slug = str(resolved.get("dataset_slug") or "")
         primary = next((spec for spec in specs if spec.operation.value != "ROWS"), specs[0])
-        base: dict[str, Any] = {
-            "claim_id": _claim_id_for(sentence, claims),
-            "dataset_slug": slug,
-            "resolution": resolved.get("resolution") or "not_found",
-            "spec": primary.model_dump(mode="json"),
-            "actual": None,
-            "expected": primary.expected,
-            "status": "could_not_run",
-            "steps": steps,
-            "log": "dataset not available on this machine",
-            "formula": formula(primary),
-        }
-        if resolved.get("resolution") != "match" or not slug:
-            if resolved.get("resolution") == "ambiguous":
-                base["log"] = "Exact dataset version could not be verified."
-            computations.append(base)
-            continue
-        if slug not in acquired:
-            acquired[slug] = datasets.acquire_table(slug, "")
-        table = acquired[slug]
-        if table is None:
-            computations.append(base)
-            continue
-        steps.append("Downloaded source data")
-        try:
-            frame = pd.read_csv(table)
-        except (OSError, ValueError, pd.errors.ParserError):
-            base["steps"] = steps
-            base["log"] = "dataset not available on this machine"
-            computations.append(base)
-            continue
-        outcomes = []
-        for spec in specs:
-            if not isinstance(spec, Spec):
-                continue
-            outcome = dsl.execute(spec, frame)
-            outcomes.append(outcome)
-            steps.append(f"Executed {spec.operation.value}")
-            if outcome["status"] == "reproduced":
-                steps.append(f"Reproduced: {outcome['actual']}")
-            elif outcome["status"] == "could_not_reproduce":
-                steps.append(f"Computed {outcome['actual']}, claimed {outcome['expected']}")
-        chosen = next(
-            (item for item in outcomes if item.get("status") == "could_not_reproduce"),
-            next((item for item in outcomes if item.get("formula") == formula(primary)), outcomes[-1] if outcomes else None),
-        )
-        if chosen is None:
-            computations.append(base)
-            continue
-        base.update(
+        prepared.append(
             {
-                "actual": chosen.get("actual"),
-                "expected": chosen.get("expected"),
-                "status": chosen.get("status") or "could_not_run",
-                "formula": chosen.get("formula") or formula(primary),
-                "log": chosen.get("log") or "",
-                "steps": steps,
+                "sentence": sentence,
+                "specs": specs,
+                "resolved": resolved,
+                "slug": slug,
+                "primary": primary,
+                "steps": ["Located claim", *list(resolved.get("steps") or [])],
+                "dataset_resolution_ms": resolution_ms,
             }
         )
-        if os.environ.get("ARX_KAGGLE_KERNEL") == "1":
-            sender = pusher if pusher is not None else push_kernel
-            try:
-                sender({"dataset_slug": slug, "claim_text": sentence, "checks": [], "file_name": ""})
-            except Exception:
-                pass
-        computations.append(base)
-    return computations
+
+    by_slug: dict[str, list[tuple[int, dict[str, Any]]]] = {}
+    unmatched: list[tuple[int, dict[str, Any]]] = []
+    for index, item in enumerate(prepared):
+        slug = item["slug"]
+        if item["resolved"].get("resolution") == "match" and slug:
+            by_slug.setdefault(slug, []).append((index, item))
+        else:
+            unmatched.append((index, item))
+
+    by_index: dict[int, dict[str, Any]] = {}
+    for index, item in unmatched:
+        base = _base_computation(item, claims)
+        if item["resolved"].get("resolution") == "ambiguous":
+            base["log"] = "Exact dataset version could not be verified."
+        by_index[index] = base
+
+    if by_slug:
+        workers = min(_repro_workers(), len(by_slug))
+        with ThreadPoolExecutor(max_workers=workers) as pool:
+            futures = [
+                pool.submit(_execute_slug_group, slug, items, claims, pusher)
+                for slug, items in by_slug.items()
+            ]
+            for future in futures:
+                for index, computation in future.result():
+                    by_index[index] = computation
+
+    return [by_index[i] for i in range(len(prepared))]
