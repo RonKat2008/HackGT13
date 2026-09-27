@@ -1,14 +1,15 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import type { Claim, Paper, Quote } from "@/lib/desk";
-import { findingCount, paperLabel, summaryLine, summaryOf, verdictTone } from "@/lib/verdict";
+import type { Claim, Paper, PaperProgress, Quote } from "@/lib/desk";
+import { findingCount, paperLabel, progressLine, summaryLine, summaryOf, verdictTone } from "@/lib/verdict";
 import { deletePaper } from "../../actions";
 import { AskDesk } from "../ask";
 import { MorphLink } from "../../morph-link";
 import { evidencePage } from "../../finding";
 import { PdfView, type PdfMark } from "../../pdf-view";
 import { finishedDetail, issueIndexForPart, issueQuote, Specialists } from "../../specialists";
+import progressFixture from "../../fixtures/progress.json";
 
 const STARTER = `rate = 20 + 22
 print("cell result", rate)
@@ -221,8 +222,12 @@ export function Workflow({
           {" · "}
           <span className={verdictTone(paper.status)}>{paper.status === "queued" ? "Not read" : paperLabel(paper)}</span>
         </p>
-        <SummaryHeader paper={paper} />
-        {part ? <p className="mt-3 max-w-xl text-sm leading-6 text-[#1c1915]">{partNote(paper, part)}</p> : null}
+        <SummaryHeader
+          paper={part === "progress" ? { ...paper, progress: progressFixture.paper as PaperProgress } : paper}
+        />
+        {part && part !== "progress" ? (
+          <p className="mt-3 max-w-xl text-sm leading-6 text-[#1c1915]">{partNote(paper, part)}</p>
+        ) : null}
       </header>
       <div className="mt-4 flex min-h-0 flex-1 flex-col lg:flex-row">
         {asking ? (
@@ -346,6 +351,10 @@ export function Workflow({
 }
 
 function SummaryHeader({ paper }: { paper: Paper }) {
+  const live = paper.progress ? progressLine(paper.progress) : "";
+  if (live) {
+    return <p className="mt-3 max-w-xl text-sm leading-6 text-[#1c1915]">{live}</p>;
+  }
   const summary = summaryOf(paper);
   if (!summaryLine(summary)) {
     if (paper.status === "queued" || paper.status === "error") {

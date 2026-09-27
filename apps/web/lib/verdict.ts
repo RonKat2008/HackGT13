@@ -1,4 +1,4 @@
-import { EMPTY_SUMMARY, type Claim, type Paper, type Summary } from "./desk";
+import { EMPTY_SUMMARY, type Claim, type Paper, type PaperProgress, type Summary } from "./desk";
 
 const FAILURE_ORDER = ["citation", "number", "table", "support", "semantic", "dataset", "test"] as const;
 
@@ -155,6 +155,14 @@ function plural(count: number, one: string, many: string): string {
 
 export function summaryOf(paper: Pick<Paper, "summary">): Summary {
   return paper.summary ?? EMPTY_SUMMARY;
+}
+
+export function progressLine(progress: Pick<PaperProgress, "claims_total" | "claims_done" | "findings_so_far">): string {
+  if (progress.claims_total === 0) return "";
+  const parts = [`${progress.claims_done} of ${progress.claims_total} claims checked.`];
+  if (progress.findings_so_far === 1) parts.push("1 to open.");
+  if (progress.findings_so_far > 1) parts.push(`${progress.findings_so_far} to open.`);
+  return parts.join(" ");
 }
 
 export function summaryLine(summary: Summary): string {
