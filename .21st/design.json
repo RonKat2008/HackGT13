@@ -1,0 +1,15 @@
+{
+  "decisions": [
+    {
+      "id": "pdf-ink-marker",
+      "date": "2026-09-26",
+      "choice": "Ink marker",
+      "summary": "PDF highlights are marker strokes seated in the line and blended with multiply so the ink stays readable. The pointer is a short gutter elbow in #6f5424 that ends in a dot on the focused stroke.",
+      "rejected": ["Margin index", "Labeled box"],
+      "references": [
+        "https://21st.dev/r/kapishdima/marker-highlight",
+        "https://21st.dev/r/danielpetho/text-highlighter"
+      ]
+    }
+  ]
+}

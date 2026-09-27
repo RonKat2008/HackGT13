@@ -237,7 +237,20 @@ def create_user_conference(owner: str, name: str, contact_email: str) -> dict[st
         user = conn.execute("SELECT 1 FROM users WHERE user_id = ?", (owner,)).fetchone()
         if user is None:
             raise BatchError(404, "account not found")
-        raise BatchError(409, "the desk already has one list")
+        conference_id = str(uuid4())
+        conn.execute(
+            """
+            INSERT INTO conferences (conference_id, name, contact_email, owner)
+            VALUES (?, ?, ?, ?)
+            """,
+            (conference_id, name.strip(), contact_email.strip(), owner),
+        )
+        conn.commit()
+    return {
+        "conference_id": conference_id,
+        "name": name.strip(),
+        "contact_email": contact_email.strip(),
+    }
 
 
 def parse_arxiv_id(line: str) -> str | None:
@@ -268,14 +281,26 @@ def _ensure_one_list(conn: Any) -> None:
 
 
 def list_conferences(owner: str | None = None) -> list[dict[str, Any]]:
-    del owner
     with _db() as conn:
         _ensure_desk(conn)
-        _ensure_one_list(conn)
-        rows = conn.execute(
-            "SELECT * FROM conferences WHERE conference_id = ?",
-            (DEMO_CONFERENCE_ID,),
-        ).fetchall()
+        tables = {
+            row[0]
+            for row in conn.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'table'"
+            ).fetchall()
+        }
+        shelf = ""
+        if "author_shelves" in tables:
+            shelf = " AND conference_id NOT IN (SELECT conference_id FROM author_shelves)"
+        if owner:
+            rows = conn.execute(
+                f"SELECT * FROM conferences WHERE owner = ?{shelf} ORDER BY name ASC",
+                (owner,),
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                f"SELECT * FROM conferences WHERE 1 = 1{shelf} ORDER BY name ASC"
+            ).fetchall()
         listed = []
         for row in rows:
             counts = conn.execute(

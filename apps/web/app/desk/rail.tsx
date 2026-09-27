@@ -1,9 +1,10 @@
 import Link from "next/link";
-import { EXAMPLE_JOB_ID, type Paper } from "@/lib/desk";
+import { EXAMPLE_JOB_ID, type ConferenceSummary, type Paper } from "@/lib/desk";
 import { paperLabel, verdictTone } from "@/lib/verdict";
 import { AccountMenu } from "./account";
 import { AddPapersForm } from "./add-form";
-import { addPapers, deletePaper, runQueue, uploadPdf } from "./actions";
+import { addPapers, deleteConference, deletePaper, runQueue, uploadPdf } from "./actions";
+import { DeleteConferenceButton } from "./delete-conference";
 import { MorphLink } from "./morph-link";
 
 function dot(status: string): string {
@@ -11,6 +12,45 @@ function dot(status: string): string {
   if (status === "passed") return "bg-[#2f6b4f]";
   if (status === "running") return "bg-[#c4a15a]";
   return "bg-[#cfc6b8]";
+}
+
+export function ConferenceRail({
+  conferences,
+  email,
+}: {
+  conferences: ConferenceSummary[];
+  email: string;
+}) {
+  return (
+    <aside className="flex max-h-44 shrink-0 flex-col gap-3 px-4 py-4 lg:max-h-none lg:min-h-0 lg:py-6">
+      <Link href="/desk" className="font-[family-name:var(--desk-serif)] text-2xl">
+        ArxAudit
+      </Link>
+      <p className="text-[11px] tracking-[0.16em] text-[#6b645c]">YOUR LISTS</p>
+      <ul className="flex gap-3 overflow-x-auto lg:min-h-0 lg:flex-1 lg:flex-col lg:overflow-y-auto">
+        {conferences.length === 0 ? (
+          <li className="text-sm text-[#6b645c]">No lists yet.</li>
+        ) : (
+          conferences.map((conference) => (
+            <li key={conference.conference_id} className="flex shrink-0 items-start gap-2 lg:shrink">
+              <Link href={`/desk/${conference.conference_id}`} className="block min-w-0 flex-1 rounded-xl px-2 py-2 hover:bg-white/60">
+                <span className="block font-[family-name:var(--desk-serif)] text-lg leading-tight">
+                  {conference.name}
+                </span>
+                <span className="text-[11px] text-[#6b645c]">
+                  {conference.queued} queued · {conference.running} running · {conference.finished} finished
+                </span>
+              </Link>
+              {conference.running === 0 ? (
+                <DeleteConferenceButton conferenceId={conference.conference_id} action={deleteConference} />
+              ) : null}
+            </li>
+          ))
+        )}
+      </ul>
+      <AccountMenu email={email} />
+    </aside>
+  );
 }
 
 export function PaperRail({
@@ -41,6 +81,11 @@ export function PaperRail({
         </Link>
         <p className="mt-4 font-[family-name:var(--desk-serif)] text-lg leading-tight">{name}</p>
         <p className="mt-1 text-[11px] text-[#6b645c]">{papers.length} papers</p>
+        {running ? null : (
+          <div className="mt-2">
+            <DeleteConferenceButton conferenceId={conferenceId} action={deleteConference} />
+          </div>
+        )}
       </div>
       <form action={run} className="relative z-10 flex shrink-0 items-center gap-2">
         <input
