@@ -125,7 +125,7 @@ export function DeskStill() {
     <div className="overflow-hidden rounded-[1.75rem] bg-[#f7f3ea] ring-1 ring-[#e4dcd0]" aria-hidden="true">
       <div className="grid min-h-[28rem] sm:grid-cols-[11rem_minmax(0,1fr)]">
         <div className="border-b border-[#e4dcd0] p-5 sm:border-b-0 sm:border-r">
-          <p className="font-[family-name:var(--desk-serif)] text-xl">ArxAudit</p>
+          <p className="font-[family-name:var(--desk-serif)] text-xl">PreSearch</p>
           <p className="mt-6 text-[11px] tracking-[0.16em] text-[#6b645c]">YOUR LISTS</p>
           <p className="mt-4 font-[family-name:var(--desk-serif)] text-lg leading-tight">Desk review</p>
           <p className="mt-1 text-[11px] text-[#6b645c]">2 papers</p>

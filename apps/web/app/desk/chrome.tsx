@@ -1,6 +1,7 @@
 "use client";
 
 import { usePathname } from "next/navigation";
+import { VoiceDesk } from "./voice-desk";
 
 export function DeskChrome({ children }: { children: React.ReactNode }) {
   const path = usePathname();
@@ -12,6 +13,7 @@ export function DeskChrome({ children }: { children: React.ReactNode }) {
       style={{ colorScheme: "light" }}
     >
       {children}
+      {login ? null : <VoiceDesk />}
     </div>
   );
 }

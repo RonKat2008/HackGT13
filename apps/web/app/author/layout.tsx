@@ -1,5 +1,5 @@
 export const metadata = {
-  title: "ArxAudit — Author",
+  title: "PreSearch — Author",
   description: "Read one paper and ask about what the audit found.",
 };
 

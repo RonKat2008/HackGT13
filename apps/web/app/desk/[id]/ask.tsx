@@ -2,6 +2,8 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { Paper, Quote, TraceStep } from "@/lib/desk";
+import type { DeskVoiceAction } from "../voice-action";
+import { takeChatPrompt } from "../voice-action";
 import { GoldThread } from "../gold-thread";
 import { MorphLink } from "../morph-link";
 import { PdfView } from "../pdf-view";
@@ -94,6 +96,21 @@ export function AskDesk({
     return () => {
       cancelled = true;
     };
+  }, [conferenceId]);
+
+  const sendRef = useRef<(text?: string) => Promise<void>>(async () => {});
+
+  useEffect(() => {
+    const queued = takeChatPrompt();
+    if (queued) void sendRef.current(queued);
+    function onVoice(event: Event) {
+      const action = (event as CustomEvent<DeskVoiceAction>).detail;
+      if (action?.type !== "prompt" || !action.text) return;
+      takeChatPrompt();
+      void sendRef.current(action.text);
+    }
+    window.addEventListener("desk-voice", onVoice);
+    return () => window.removeEventListener("desk-voice", onVoice);
   }, [conferenceId]);
 
   function pick(paper: Paper) {
@@ -215,6 +232,8 @@ export function AskDesk({
       setBusy(false);
     }
   }
+
+  sendRef.current = send;
 
   const starters = [
     "List the findings",

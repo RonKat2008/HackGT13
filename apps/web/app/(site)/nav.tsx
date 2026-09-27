@@ -7,7 +7,7 @@ export async function SiteNav() {
     <header className="sticky top-0 z-20 border-b border-[#e4dcd0] bg-[#f4f0e6]/90 backdrop-blur-md">
       <div className="mx-auto flex max-w-6xl items-center justify-between gap-6 px-6 py-4">
         <Link href="/" className="font-[family-name:var(--desk-serif)] text-2xl tracking-tight">
-          ArxAudit
+          PreSearch
         </Link>
         <nav className="flex items-center gap-5 text-sm" aria-label="Site">
           <Link href="/#how" className="hidden text-[#6b645c] sm:inline">

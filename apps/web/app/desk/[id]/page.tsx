@@ -42,7 +42,7 @@ export default async function ConferencePage({
         initial={papers}
         initialProgress={progress}
         example={example}
-        initialView={view === "summary" ? "summary" : "chat"}
+        initialView={view === "chat" ? "chat" : view === "summary" || example ? "summary" : "chat"}
       />
     </DeskShell>
   );

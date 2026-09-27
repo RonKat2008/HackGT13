@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import type { Claim, Paper, PaperProgress, Quote } from "@/lib/desk";
+import type { DeskVoiceAction } from "../../voice-action";
 import { findingCount, paperLabel, progressLine, summaryLine, summaryOf, verdictTone } from "@/lib/verdict";
 import { deletePaper } from "../../actions";
 import { AskDesk } from "../ask";
@@ -21,12 +22,14 @@ export function Workflow({
   papers,
   initial,
   part = "",
+  ask = false,
 }: {
   conferenceId: string;
   conferenceName: string;
   papers: Paper[];
   initial: Paper;
   part?: string;
+  ask?: boolean;
 }) {
   const [paper, setPaper] = useState(initial);
   const [cells, setCells] = useState([
@@ -39,7 +42,7 @@ export function Workflow({
   ]);
   const [busy, setBusy] = useState<number | null>(null);
   const [notebook, setNotebook] = useState(false);
-  const [asking, setAsking] = useState(false);
+  const [asking, setAsking] = useState(ask);
   const [selected, setSelected] = useState(-1);
   const [passage, setPassage] = useState<Quote | null>(null);
   const [claimId, setClaimId] = useState("");
@@ -62,6 +65,19 @@ export function Workflow({
           .map((item) => ({ page: item.page, text: item.text, role: item.role })),
       ]
     : [];
+
+  useEffect(() => {
+    if (ask) setAsking(true);
+  }, [ask]);
+
+  useEffect(() => {
+    function onVoice(event: Event) {
+      const action = (event as CustomEvent<DeskVoiceAction>).detail;
+      if (action?.type === "open" && action.job_id === paper.job_id) setAsking(Boolean(action.ask));
+    }
+    window.addEventListener("desk-voice", onVoice);
+    return () => window.removeEventListener("desk-voice", onVoice);
+  }, [paper.job_id]);
 
   useEffect(() => {
     const code = paper.kaggle?.code;

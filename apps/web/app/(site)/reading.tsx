@@ -19,7 +19,7 @@ const QUESTIONS = [
     slip: "Accuracy reached 95.2% on the public benchmark.",
   },
   {
-    title: "What did ArxAudit investigate?",
+    title: "What did PreSearch investigate?",
     tag: "The check",
     slip: "A citation, a number, a table, or the paper’s own statement.",
   },

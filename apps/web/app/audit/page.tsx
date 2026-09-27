@@ -51,7 +51,7 @@ export default function AuditPage() {
     <main className="mx-auto flex w-full max-w-6xl flex-1 flex-col px-6 py-10">
       <header className="mb-2 flex flex-wrap items-baseline gap-4">
         <h1 className="text-2xl font-semibold tracking-tight text-zinc-900">
-          ArxAudit
+          PreSearch
         </h1>
         <a
           href="/audit/conferences"

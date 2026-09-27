@@ -16,7 +16,7 @@ export function ConferenceRail({
   return (
     <aside className="flex max-h-44 shrink-0 flex-col gap-3 px-4 py-4 lg:max-h-none lg:min-h-0 lg:py-6">
       <Link href="/desk" className="font-[family-name:var(--desk-serif)] text-2xl">
-        ArxAudit
+        PreSearch
       </Link>
       <p className="text-[11px] tracking-[0.16em] text-[#6b645c]">YOUR LISTS</p>
       <ul className="flex gap-3 overflow-x-auto lg:min-h-0 lg:flex-1 lg:flex-col lg:overflow-y-auto">
@@ -33,9 +33,7 @@ export function ConferenceRail({
                   {conference.queued} queued · {conference.running} running · {conference.finished} finished
                 </span>
               </Link>
-              {conference.running === 0 ? (
-                <DeleteConferenceButton conferenceId={conference.conference_id} action={deleteConference} />
-              ) : null}
+              <DeleteConferenceButton conferenceId={conference.conference_id} action={deleteConference} />
             </li>
           ))
         )}
@@ -73,7 +71,7 @@ export function PaperRail({
     <aside className="flex max-h-52 shrink-0 flex-col gap-3 px-4 py-4 lg:max-h-none lg:min-h-0 lg:py-6">
       <div>
         <Link href="/desk" className="font-[family-name:var(--desk-serif)] text-2xl">
-          ArxAudit
+          PreSearch
         </Link>
         <p className="mt-4 font-[family-name:var(--desk-serif)] text-lg leading-tight">{name}</p>
         <ConferenceCount
@@ -82,11 +80,9 @@ export function PaperRail({
           initialProgress={progress}
           example={example}
         />
-        {running ? null : (
-          <div className="mt-2">
-            <DeleteConferenceButton conferenceId={conferenceId} action={deleteConference} />
-          </div>
-        )}
+        <div className="mt-2">
+          <DeleteConferenceButton conferenceId={conferenceId} action={deleteConference} />
+        </div>
       </div>
       <form action={run} className="relative z-10 flex shrink-0 items-center gap-2">
         <input

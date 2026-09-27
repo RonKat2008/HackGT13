@@ -2,7 +2,7 @@ import { DeskChrome } from "./chrome";
 import "./motion.css";
 
 export const metadata = {
-  title: "ArxAudit",
+  title: "PreSearch",
   description: "Conference desk for fabricated claims.",
 };
 

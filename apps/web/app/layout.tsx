@@ -13,7 +13,7 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "ArxAudit",
+  title: "PreSearch",
   description: "A quiet desk for the papers a chair is responsible for.",
 };
 

@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import {
   EXAMPLE_JOB_ID,
@@ -8,6 +9,7 @@ import {
   type ConferenceProgress,
   type Paper,
 } from "@/lib/desk";
+import type { DeskVoiceAction } from "./voice-action";
 import {
   categoryLines,
   failureWhere,
@@ -146,18 +148,41 @@ export function DeskViews({
   example?: boolean;
   initialView?: "chat" | "summary";
 }) {
+  const router = useRouter();
   const [view, setView] = useState<"chat" | "summary">(example || initialView === "summary" ? "summary" : "chat");
   const { papers, progress } = useConferenceDesk(conferenceId, initial, initialProgress, example);
   const counts = conferenceProgressLine(progress, papers);
+
+  useEffect(() => {
+    function onVoice(event: Event) {
+      const action = (event as CustomEvent<DeskVoiceAction>).detail;
+      if (action?.type === "prompt") {
+        setView("chat");
+        return;
+      }
+      if (action?.type === "show" && (action.view === "summary" || action.view === "chat")) {
+        setView(action.view);
+      }
+    }
+    window.addEventListener("desk-voice", onVoice);
+    return () => window.removeEventListener("desk-voice", onVoice);
+  }, []);
+
+  function selectView(next: "chat" | "summary") {
+    setView(next);
+    const params = new URLSearchParams(window.location.search);
+    params.set("view", next);
+    router.replace(`/desk/${conferenceId}?${params.toString()}`, { scroll: false });
+  }
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       <p className="shrink-0 px-4 pt-3 text-[11px] text-[#6b645c]">{counts}</p>
       <div role="tablist" aria-label="Desk view" className="flex shrink-0 items-end gap-1 border-b border-[#e4dcd0] px-4">
-        <TabButton id="chat" selected={view === "chat"} onSelect={() => setView("chat")}>
+        <TabButton id="chat" selected={view === "chat"} onSelect={() => selectView("chat")}>
           Chat
         </TabButton>
-        <TabButton id="summary" selected={view === "summary"} onSelect={() => setView("summary")}>
+        <TabButton id="summary" selected={view === "summary"} onSelect={() => selectView("summary")}>
           Summary
         </TabButton>
       </div>

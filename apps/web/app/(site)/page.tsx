@@ -100,7 +100,7 @@ export default async function HomePage() {
       <footer className="border-t border-[#e4dcd0]">
         <div className="mx-auto flex max-w-6xl flex-wrap items-end justify-between gap-6 px-6 py-12">
           <div>
-            <p className="font-[family-name:var(--desk-serif)] text-3xl">ArxAudit</p>
+            <p className="font-[family-name:var(--desk-serif)] text-3xl">PreSearch</p>
             <p className="mt-2 text-sm text-[#6b645c]">Open the desk when the list is yours.</p>
           </div>
           <Link href="/login" className="rounded-full bg-[#1c1915] px-5 py-3 text-sm text-[#f4f0e6]">

@@ -10,11 +10,11 @@ export default async function PaperPage({
   searchParams,
 }: {
   params: Promise<{ id: string; jobId: string }>;
-  searchParams: Promise<{ part?: string; example?: string }>;
+  searchParams: Promise<{ part?: string; example?: string; ask?: string }>;
 }) {
   const user = await requireDeskUser();
   const { id, jobId } = await params;
-  const { part, example } = await searchParams;
+  const { part, example, ask } = await searchParams;
   const showExample = example === "1" || jobId === EXAMPLE_JOB_ID;
   const desk = await deskFetch<ConferenceDesk>(`/desk/conferences/${id}`);
   const papers = showExample ? withExample(desk.papers) : desk.papers;
@@ -39,6 +39,7 @@ export default async function PaperPage({
         papers={papers}
         initial={paper}
         part={part ?? ""}
+        ask={ask === "1"}
       />
     </DeskShell>
   );
