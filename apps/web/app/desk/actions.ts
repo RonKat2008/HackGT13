@@ -3,6 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { deskFetch } from "@/lib/desk";
+import { requireDeskUser } from "@/lib/session";
 
 const base = process.env.ORCHESTRATOR_URL ?? "http://127.0.0.1:8000";
 
@@ -27,6 +28,7 @@ export async function addPapers(
     detail?: string;
     added?: number;
     refreshed?: number;
+    open_job_id?: string;
   };
   if (!response.ok) {
     return {
@@ -37,6 +39,10 @@ export async function addPapers(
   const added = body.added ?? 0;
   const refreshed = body.refreshed ?? 0;
   if (added === 0 && refreshed === 0) {
+    if (body.open_job_id) {
+      revalidatePath(`/desk/${conferenceId}`);
+      redirect(`/desk/${conferenceId}/${body.open_job_id}`);
+    }
     return { error: "Those papers are already on this list.", added: 0 };
   }
   revalidatePath(`/desk/${conferenceId}`);
@@ -77,6 +83,19 @@ export async function uploadPdf(
   revalidatePath(`/desk/${conferenceId}`);
   revalidatePath("/desk", "layout");
   return { error: "", added };
+}
+
+export async function deleteConference(formData: FormData) {
+  const conferenceId = String(formData.get("conference_id") ?? "").trim();
+  if (!conferenceId) return;
+  const owner = (await requireDeskUser()).id;
+  const response = await fetch(
+    `${base}/desk/conferences/${conferenceId}?owner=${encodeURIComponent(owner)}`,
+    { method: "DELETE", cache: "no-store" },
+  );
+  if (!response.ok && response.status !== 404) return;
+  revalidatePath("/desk", "layout");
+  redirect("/desk");
 }
 
 export async function deletePaper(conferenceId: string, formData: FormData) {

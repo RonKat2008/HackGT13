@@ -160,3 +160,22 @@ def test_attach_stores_the_catalog_on_the_claim(tmp_path, monkeypatch) -> None:
     assert claims[1]["verdict"] == "unresolved"
     assert claims[0]["catalog"]["queried"]
     assert any(item["catalog"] == "crossref" for item in claims[0]["catalog"]["queried"])
+
+
+def test_strong_title_match_wins_over_a_catalog_error() -> None:
+    catalog = {
+        "queried": [
+            {
+                "catalog": "crossref",
+                "status": "match",
+                "score": 0.95,
+                "title": "Attention Is All You Need",
+            },
+            {"catalog": "semantic_scholar", "status": "error", "score": 0},
+        ]
+    }
+    verdict, confidence, reason = decide(_claim("See (Vaswani et al., 2017)."), catalog)
+    assert verdict == "supported"
+    assert confidence >= 0.85
+    assert reason == ""
+    assert verdict != "unresolved"

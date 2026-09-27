@@ -1,14 +1,14 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import type { Paper, Quote } from "@/lib/desk";
-import { categoryLines, findingCount, isFinding, paperLabel, summaryLine, summaryOf, verdictTone } from "@/lib/verdict";
+import { useEffect, useRef, useState } from "react";
+import type { Claim, Paper, Quote } from "@/lib/desk";
+import { categoryLines, findingCount, legendLine, paperLabel, summaryLine, summaryOf, verdictTone } from "@/lib/verdict";
 import { deletePaper } from "../../actions";
 import { AskDesk } from "../ask";
 import { MorphLink } from "../../morph-link";
 import { evidencePage } from "../../finding";
 import { PdfView, type PdfMark } from "../../pdf-view";
-import { finishedDetail, issueIndexForPart, issueQuote, orderedClaims, Specialists } from "../../specialists";
+import { finishedDetail, issueIndexForPart, issueQuote, Specialists } from "../../specialists";
 
 const STARTER = `rate = 20 + 22
 print("cell result", rate)
@@ -43,18 +43,21 @@ export function Workflow({
   const [passage, setPassage] = useState<Quote | null>(null);
   const [claimId, setClaimId] = useState("");
   const [focusPage, setFocusPage] = useState<number | null>(null);
+  const [focusText, setFocusText] = useState("");
   const [focusToken, setFocusToken] = useState(0);
+  const held = useRef<Claim | null>(null);
   const remove = deletePaper.bind(null, conferenceId);
   const unread = !paper.paper_text.trim() && (paper.claims ?? []).length === 0;
-  const activeClaim =
-    (paper.claims ?? []).find((claim) => claim.claim_id === claimId) ??
-    orderedClaims(paper).find((claim) => isFinding(claim)) ??
-    orderedClaims(paper)[0];
+  const found = claimId ? (paper.claims ?? []).find((claim) => claim.claim_id === claimId) ?? null : null;
+  if (found && (!held.current || held.current.claim_id !== found.claim_id || held.current.verdict !== found.verdict)) {
+    held.current = found;
+  }
+  const activeClaim = claimId ? found ?? held.current : null;
   const marks: PdfMark[] = activeClaim
     ? [
         { page: activeClaim.page, text: activeClaim.text, role: "claim" },
         ...activeClaim.evidence
-          .filter((item) => item.text.trim())
+          .filter((item) => item.text.trim() && !item.text.startsWith("Neighbor window"))
           .map((item) => ({ page: item.page, text: item.text, role: item.role })),
       ]
     : [];
@@ -81,7 +84,17 @@ export function Workflow({
     if (paper.status !== "queued" && paper.status !== "running") return;
     const timer = setInterval(async () => {
       const response = await fetch(`/api/desk/papers/${paper.job_id}`);
-      if (response.ok) setPaper(await response.json());
+      if (!response.ok) return;
+      const next = (await response.json()) as Paper;
+      setClaimId((current) => {
+        if (!current) return current;
+        const claims = next.claims ?? [];
+        if (claims.some((claim) => claim.claim_id === current)) return current;
+        const text = held.current?.text;
+        const match = text ? claims.find((claim) => claim.text === text) : undefined;
+        return match?.claim_id ?? current;
+      });
+      setPaper(next);
     }, 800);
     return () => clearInterval(timer);
   }, [paper.job_id, paper.status]);
@@ -161,6 +174,24 @@ export function Workflow({
             >
               Report
             </MorphLink>
+            {paper.status === "passed" || paper.status === "contradicted" || paper.status === "error" ? (
+              <button
+                type="button"
+                onClick={() => {
+                  setClaimId("");
+                  held.current = null;
+                  setFocusPage(null);
+                  setFocusText("");
+                  void fetch(`/api/desk/papers/${paper.job_id}/reread`, { method: "POST" }).then(async () => {
+                    const response = await fetch(`/api/desk/papers/${paper.job_id}`);
+                    if (response.ok) setPaper((await response.json()) as Paper);
+                  });
+                }}
+                className="rounded-full px-3 py-1.5 text-xs text-[#1c1915] ring-1 ring-[#e4dcd0]"
+              >
+                Read again
+              </button>
+            ) : null}
             <form action={remove}>
               <input type="hidden" name="job_id" value={paper.job_id} />
               <input type="hidden" name="open" value="1" />
@@ -188,7 +219,7 @@ export function Workflow({
           {paper.arxiv_id}
           {paper.author_name ? ` · ${paper.author_name}` : ""}
           {" · "}
-          <span className={verdictTone(paper.status)}>{paperLabel(paper)}</span>
+          <span className={verdictTone(paper.status)}>{paper.status === "queued" ? "Not read" : paperLabel(paper)}</span>
         </p>
         <SummaryHeader paper={paper} />
         {part ? <p className="mt-3 max-w-xl text-sm leading-6 text-[#1c1915]">{partNote(paper, part)}</p> : null}
@@ -223,7 +254,8 @@ export function Workflow({
               page={activeClaim ? null : (passage?.page ?? null)}
               quote={activeClaim ? "" : (passage?.text ?? "")}
               marks={activeClaim ? marks : undefined}
-              focusPage={activeClaim ? (focusPage ?? evidencePage(activeClaim)) : (passage?.page ?? null)}
+              focusPage={activeClaim ? (focusPage ?? activeClaim.page ?? evidencePage(activeClaim)) : (passage?.page ?? null)}
+              focusText={focusText}
               focusToken={focusToken}
             />
           </div>
@@ -233,14 +265,17 @@ export function Workflow({
           selected={selected}
           onSelect={selectIssue}
           focus={part === "result" ? "" : part}
-          selectedClaimId={activeClaim?.claim_id ?? ""}
+          selectedClaimId={claimId}
           onSelectClaim={(id) => {
             setClaimId(id);
             const claim = (paper.claims ?? []).find((item) => item.claim_id === id);
-            setFocusPage(claim ? evidencePage(claim) : null);
+            setFocusPage(claim?.page ?? (claim ? evidencePage(claim) : null));
+            setFocusText(claim?.text ?? "");
+            setFocusToken((token) => token + 1);
           }}
-          onViewEvidence={(page) => {
+          onViewEvidence={(page, text) => {
             setFocusPage(page);
+            setFocusText(text ?? "");
             setFocusToken((token) => token + 1);
           }}
         />
@@ -313,11 +348,18 @@ export function Workflow({
 function SummaryHeader({ paper }: { paper: Paper }) {
   const summary = summaryOf(paper);
   const line = summaryLine(summary);
-  if (!line) return null;
+  const legend = legendLine(summary);
+  if (!line) {
+    if (paper.status === "queued" || paper.status === "error") {
+      return <p className="mt-3 text-sm text-[#6b645c]">Not read</p>;
+    }
+    return null;
+  }
   const categories = categoryLines(summary).filter((item) => item.total > 0);
   return (
     <div className="mt-3 max-w-3xl">
       <p className="text-sm leading-6 text-[#1c1915]">{line}</p>
+      {legend ? <p className="mt-1 text-xs leading-5 text-[#6b645c]">{legend}</p> : null}
       {categories.length > 0 ? (
         <dl className="mt-2 flex flex-wrap gap-x-6 gap-y-1 text-xs text-[#6b645c]">
           {categories.map((item) => (

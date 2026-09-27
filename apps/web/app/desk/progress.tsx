@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { EXAMPLE_JOB_ID, type ConferenceDesk, type Paper } from "@/lib/desk";
-import { categoryLines, failureWhere, findingCount, paperLabel, summaryLine, summaryOf } from "@/lib/verdict";
+import { categoryLines, failureWhere, findingCount, legendLine, paperLabel, summaryLine, summaryOf } from "@/lib/verdict";
 import { AskDesk } from "./[id]/ask";
 import { LABELS, ORDER } from "./specialists";
 
@@ -32,7 +32,7 @@ function resultOf(paper: Paper): { label: string; tone: string } | null {
 function liveLine(paper: Paper): string {
   const cursor = reach(paper);
   if (paper.status === "running" && cursor >= 0) return `Now · ${LABELS[ORDER[cursor]]}`;
-  if (paper.status === "queued") return "Waiting";
+  if (paper.status === "queued") return "Not read";
   const line = summaryLine(summaryOf(paper));
   if (paper.status === "passed") return line || "Every claim checked. Nothing to report.";
   if (paper.status === "contradicted") {
@@ -218,7 +218,24 @@ function PaperBar({ conferenceId, paper }: { conferenceId: string; paper: Paper 
           })}
         </div>
       </div>
+      <div className="mt-1 flex" aria-hidden="true">
+        {stages.map((name, index) => {
+          const label = name === "result" ? "Result" : LABELS[name];
+          const now = running && name !== "result" && index === cursor;
+          return (
+            <span
+              key={name}
+              className={`min-w-0 flex-1 truncate text-center text-[9px] leading-4 ${now ? "text-[#c4a15a]" : "text-[#6b645c]"}`}
+            >
+              {label}
+            </span>
+          );
+        })}
+      </div>
       <p className="mt-2 text-xs text-[#6b645c]">{hint ?? liveLine(paper)}</p>
+      {legendLine(summaryOf(paper)) && !running ? (
+        <p className="mt-1 text-[11px] leading-5 text-[#6b645c]">{legendLine(summaryOf(paper))}</p>
+      ) : null}
       {categories.length > 0 && !running ? (
         <dl className="mt-3 grid grid-cols-2 gap-x-6 gap-y-1 text-[11px] text-[#6b645c] sm:grid-cols-4">
           {categories.map((line) => (

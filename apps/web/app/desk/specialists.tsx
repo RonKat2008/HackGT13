@@ -122,7 +122,7 @@ export function Specialists({
   focus?: string;
   selectedClaimId?: string;
   onSelectClaim?: (claimId: string) => void;
-  onViewEvidence?: (page: number | null) => void;
+  onViewEvidence?: (page: number | null, text?: string) => void;
 }) {
   const [announcement, setAnnouncement] = useState("");
   const finished = paper.events.filter((event) => event.state === "finished").length;
@@ -225,11 +225,14 @@ function ClaimList({
   paper: Paper;
   selectedClaimId: string;
   onSelectClaim: (claimId: string) => void;
-  onViewEvidence?: (page: number | null) => void;
+  onViewEvidence?: (page: number | null, text?: string) => void;
 }) {
   const claims = orderedClaims(paper);
   const findings = claims.filter((claim) => isFinding(claim));
-  const supported = claims.filter((claim) => !isFinding(claim));
+  const supported = claims.filter(
+    (claim) => !isFinding(claim) && (claim.verdict === "supported" || claim.verdict === "reproduced"),
+  );
+  const rest = claims.filter((claim) => !findings.includes(claim) && !supported.includes(claim));
   return (
     <div className="flex flex-col gap-4">
       <ClaimGroup
@@ -246,6 +249,14 @@ function ClaimList({
         onSelectClaim={onSelectClaim}
         onViewEvidence={onViewEvidence}
       />
+      <ClaimGroup
+        label="Not a finding"
+        claims={rest}
+        collapsed
+        selectedClaimId={selectedClaimId}
+        onSelectClaim={onSelectClaim}
+        onViewEvidence={onViewEvidence}
+      />
     </div>
   );
 }
@@ -253,20 +264,39 @@ function ClaimList({
 function ClaimGroup({
   label,
   claims,
+  collapsed = false,
   selectedClaimId,
   onSelectClaim,
   onViewEvidence,
 }: {
   label: string;
   claims: Claim[];
+  collapsed?: boolean;
   selectedClaimId: string;
   onSelectClaim: (claimId: string) => void;
-  onViewEvidence?: (page: number | null) => void;
+  onViewEvidence?: (page: number | null, text?: string) => void;
 }) {
+  const selectedHere = claims.some((claim) => claim.claim_id === selectedClaimId);
+  const [open, setOpen] = useState(!collapsed || selectedHere);
+  useEffect(() => {
+    if (selectedHere) setOpen(true);
+  }, [selectedHere]);
   if (claims.length === 0) return null;
   return (
     <div>
-      <p className="text-[11px] tracking-[0.12em] text-[#6b645c]">{label}</p>
+      {collapsed ? (
+        <button
+          type="button"
+          aria-expanded={open}
+          onClick={() => setOpen((current) => !current)}
+          className="text-[11px] tracking-[0.12em] text-[#6b645c]"
+        >
+          {label} · {claims.length}
+        </button>
+      ) : (
+        <p className="text-[11px] tracking-[0.12em] text-[#6b645c]">{label}</p>
+      )}
+      {open ? (
       <ul className="mt-2 flex flex-col gap-2">
         {claims.map((claim) => {
           const active = claim.claim_id === selectedClaimId;
@@ -289,6 +319,7 @@ function ClaimGroup({
           );
         })}
       </ul>
+      ) : null}
     </div>
   );
 }

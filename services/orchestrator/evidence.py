@@ -23,20 +23,49 @@ def _use_hash() -> bool:
     return os.environ.get("ARX_EMBEDDER", "").strip().lower() == "hash"
 
 
+_MINILM: tuple[Any, Any] | None = None
+_MINILM_FAILED = False
+
+
 def _embedder() -> Callable[[str], list[float]]:
     if _use_hash():
         return _default_embedder
-    try:
-        from sentence_transformers import SentenceTransformer
-    except ImportError:
+    global _MINILM, _MINILM_FAILED
+    if _MINILM_FAILED:
         return _default_embedder
-    model = SentenceTransformer("sentence-transformers/all-MiniLM-L6-v2")
+    if _MINILM is None:
+        loaded = _load_minilm()
+        if loaded is None:
+            _MINILM_FAILED = True
+            return _default_embedder
+        _MINILM = loaded
+    tokenizer, model = _MINILM
 
     def embed(text: str) -> list[float]:
-        vector = model.encode(text, normalize_embeddings=True)
-        return [float(value) for value in vector]
+        import torch
+
+        tokens = tokenizer(text or " ", return_tensors="pt", truncation=True, max_length=256)
+        with torch.no_grad():
+            hidden = model(**tokens).last_hidden_state
+            mask = tokens["attention_mask"].unsqueeze(-1).expand(hidden.size()).float()
+            pooled = (hidden * mask).sum(dim=1) / mask.sum(dim=1).clamp(min=1e-9)
+            pooled = torch.nn.functional.normalize(pooled, p=2, dim=1)
+        return [float(value) for value in pooled[0].tolist()]
 
     return embed
+
+
+def _load_minilm() -> tuple[Any, Any] | None:
+    try:
+        from transformers import AutoModel, AutoTokenizer
+
+        name = "sentence-transformers/all-MiniLM-L6-v2"
+        tokenizer = AutoTokenizer.from_pretrained(name)
+        model = AutoModel.from_pretrained(name)
+        model.eval()
+        return tokenizer, model
+    except Exception:
+        return None
 
 
 def _cosine_matrix(query: np.ndarray, matrix: np.ndarray) -> np.ndarray:
@@ -61,6 +90,17 @@ def _units(text: str) -> set[str]:
     return found
 
 
+def _overlap(left: str, right: str) -> int:
+    words = _content_words(left)
+    if not words:
+        return 0
+    return len(words & _content_words(right))
+
+
+def _content_words(text: str) -> set[str]:
+    return {word for word in re.findall(r"[a-z]{4,}", text.lower())}
+
+
 def conflicts(claim_text: str, chunk_text: str) -> bool:
     claim_numbers = _numbers(claim_text)
     chunk_numbers = _numbers(chunk_text)
@@ -74,6 +114,27 @@ class PaperIndex:
         self.path = Path(path)
         self.chunks = _chunks(self.path, sections)
         self.vectors = _vectors(self.path, [chunk["text"] for chunk in self.chunks])
+
+    def around(self, text: str, n: int = 2) -> list[dict[str, Any]]:
+        target = -1
+        needle = " ".join(text.split())[:160]
+        for index, chunk in enumerate(self.chunks):
+            body = chunk["text"]
+            if body == text or (needle and needle in body):
+                target = index
+                break
+        if target < 0:
+            return []
+        section = self.chunks[target]["section"]
+        picked: list[dict[str, Any]] = []
+        for index in range(target - n, target + n + 1):
+            if index == target or index < 0 or index >= len(self.chunks):
+                continue
+            chunk = self.chunks[index]
+            if chunk["section"] != section:
+                continue
+            picked.append(chunk)
+        return picked
 
     def retrieve(
         self,
@@ -98,6 +159,7 @@ class PaperIndex:
             range(len(chosen)),
             key=lambda slot: (
                 0 if prefer_conflicts and conflicts(claim_text, self.chunks[chosen[slot]]["text"]) else 1,
+                -_overlap(claim_text, self.chunks[chosen[slot]]["text"]) if _use_hash() else 0,
                 -float(scores[slot]),
             ),
         )
@@ -179,6 +241,7 @@ def attach(path: str | Path, sections: dict[str, str], typed_claims: list[dict[s
         for hit in contradicting:
             evidence.append(_evidence_row(hit, "contradicts"))
         claim["evidence"] = evidence
+        claim["_neighbors"] = index.around(str(claim.get("text") or ""), 2)
         steps = list(claim.get("steps") or [])
         steps.append("Retrieved supporting evidence")
         steps.append("Searched for contradictory evidence")

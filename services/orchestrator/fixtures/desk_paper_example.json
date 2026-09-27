@@ -20,11 +20,12 @@
     "unresolved": 1,
     "not_reproduced": 1,
     "insufficient": 1,
+    "not_checked": 3,
     "categories": {
-      "citations": { "resolved": 1, "total": 2 },
-      "internal": { "supported": 1, "total": 3 },
-      "numerical": { "consistent": 1, "total": 4 },
-      "computational": { "reproduced": 1, "total": 3 }
+      "citations": { "resolved": 1, "total": 2, "not_checked": 0 },
+      "internal": { "supported": 1, "total": 3, "not_checked": 1 },
+      "numerical": { "consistent": 1, "total": 4, "not_checked": 1 },
+      "computational": { "reproduced": 1, "total": 3, "not_checked": 1 }
     }
   },
   "claims": [

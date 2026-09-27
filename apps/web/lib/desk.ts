@@ -146,7 +146,7 @@ export type Claim = {
   computation: Computation | null;
 };
 
-export type CategoryCount = { total: number } & Record<string, number>;
+export type CategoryCount = { total: number; not_checked?: number } & Record<string, number>;
 
 export type Summary = {
   analyzed: number;
@@ -155,11 +155,12 @@ export type Summary = {
   unresolved: number;
   not_reproduced: number;
   insufficient: number;
+  not_checked?: number;
   categories: {
-    citations: { resolved: number; total: number };
-    internal: { supported: number; total: number };
-    numerical: { consistent: number; total: number };
-    computational: { reproduced: number; total: number };
+    citations: { resolved: number; total: number; not_checked?: number };
+    internal: { supported: number; total: number; not_checked?: number };
+    numerical: { consistent: number; total: number; not_checked?: number };
+    computational: { reproduced: number; total: number; not_checked?: number };
   };
 };
 
@@ -172,11 +173,12 @@ export const EMPTY_SUMMARY: Summary = {
   unresolved: 0,
   not_reproduced: 0,
   insufficient: 0,
+  not_checked: 0,
   categories: {
-    citations: { resolved: 0, total: 0 },
-    internal: { supported: 0, total: 0 },
-    numerical: { consistent: 0, total: 0 },
-    computational: { reproduced: 0, total: 0 },
+    citations: { resolved: 0, total: 0, not_checked: 0 },
+    internal: { supported: 0, total: 0, not_checked: 0 },
+    numerical: { consistent: 0, total: 0, not_checked: 0 },
+    computational: { reproduced: 0, total: 0, not_checked: 0 },
   },
 };
 

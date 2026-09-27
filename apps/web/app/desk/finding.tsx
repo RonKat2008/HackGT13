@@ -1,5 +1,6 @@
 "use client";
 
+import { useState } from "react";
 import type { Claim, Computation } from "@/lib/desk";
 import {
   claimVerdictLabel,
@@ -45,11 +46,12 @@ export function FindingCard({
   onViewEvidence,
 }: {
   claim: Claim;
-  onViewEvidence?: (page: number | null) => void;
+  onViewEvidence?: (page: number | null, text?: string) => void;
 }) {
   const evidence = claim.evidence.find((item) => item.role === "contradicts") ?? claim.evidence[0];
   const note = claimVerdictNote(claim.verdict);
   const page = evidencePage(claim);
+  const [chain, setChain] = useState(false);
 
   return (
     <article className="rounded-2xl bg-white px-3 py-3 ring-1 ring-[#e4dcd0]">
@@ -70,7 +72,15 @@ export function FindingCard({
       <p className="mt-1 text-xs text-[#6b645c]">
         {percent(claim.confidence)} · {depthLabel(claim.depth)}
       </p>
-      <Provenance claim={claim} />
+      <button
+        type="button"
+        aria-expanded={chain}
+        onClick={() => setChain((open) => !open)}
+        className="mt-3 text-[11px] tracking-[0.12em] text-[#6b645c]"
+      >
+        Chain
+      </button>
+      {chain ? <Provenance claim={claim} /> : null}
       {claim.steps.length > 0 ? (
         <ul className="mt-3 flex flex-col gap-1 text-xs leading-5 text-[#1c1915]">
           {claim.steps.map((step) => (
@@ -101,13 +111,29 @@ export function FindingCard({
         </dl>
       ) : null}
       {onViewEvidence ? (
-        <button
-          type="button"
-          className="mt-3 text-xs underline decoration-[#c4a15a] underline-offset-4"
-          onClick={() => onViewEvidence(page)}
-        >
-          View evidence in PDF
-        </button>
+        <div className="mt-3 flex flex-wrap gap-1.5">
+          {claim.evidence
+            .filter((item) => item.text.trim() && !item.text.startsWith("Neighbor window"))
+            .slice(0, 4)
+            .map((item, index) => (
+              <button
+                key={`${item.role}-${item.page ?? 0}-${index}`}
+                type="button"
+                className="rounded-full px-2 py-1 text-[11px] text-[#1c1915] ring-1 ring-[#e4dcd0]"
+                onClick={() => onViewEvidence(item.page, item.text)}
+              >
+                {item.role}
+                {item.page ? ` p.${item.page}` : ""}
+              </button>
+            ))}
+          <button
+            type="button"
+            className="text-xs underline decoration-[#c4a15a] underline-offset-4"
+            onClick={() => onViewEvidence(page, evidence?.text || claim.text)}
+          >
+            View evidence in PDF
+          </button>
+        </div>
       ) : null}
       {isFinding(claim) && claim.reason ? <p className="mt-2 text-xs leading-5 text-[#6b645c]">{claim.reason}</p> : null}
     </article>

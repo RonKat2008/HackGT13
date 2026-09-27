@@ -9,6 +9,7 @@ from app import app
 def _client(tmp_path, monkeypatch) -> TestClient:
     monkeypatch.setenv("RUN_DB", str(tmp_path / "playbook.sqlite"))
     monkeypatch.setenv("ARXIV_LISTINGS", "0")
+    monkeypatch.setenv("ARX_EMBEDDER", "hash")
     return TestClient(app)
 
 
@@ -361,3 +362,19 @@ def test_second_add_keeps_one_copy_with_title_and_delete(tmp_path, monkeypatch):
         f"/desk/conferences/{conference_id}/papers/{papers[1]['job_id']}"
     )
     assert missing.status_code == 404
+
+
+def test_delete_conference_removes_the_list_and_its_papers(tmp_path, monkeypatch):
+    client = _client(tmp_path, monkeypatch)
+    conference_id = _conference(client)
+    added = client.post(
+        f"/desk/conferences/{conference_id}/submissions",
+        json={"lines": ["0000.00001"]},
+    )
+    assert added.status_code == 200
+    removed = client.delete(f"/desk/conferences/{conference_id}")
+    assert removed.status_code == 200
+    assert removed.json()["deleted"] == conference_id
+    assert client.get(f"/desk/conferences/{conference_id}").status_code == 404
+    again = client.delete(f"/desk/conferences/{conference_id}")
+    assert again.status_code == 404

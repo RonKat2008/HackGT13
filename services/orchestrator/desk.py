@@ -18,6 +18,7 @@ from typing import Any
 from uuid import uuid4
 
 import paper_audit
+import voice
 import repro
 import shelf
 from models import DeskClaim, is_finding
@@ -311,7 +312,7 @@ def add_submissions(
             raise BatchError(404, "conference not found")
         rows = conn.execute(
             """
-            SELECT paper_jobs.arxiv_id, paper_jobs.listing_title
+            SELECT paper_jobs.arxiv_id, paper_jobs.listing_title, paper_jobs.job_id
             FROM paper_jobs
             JOIN batches ON batches.batch_id = paper_jobs.batch_id
             WHERE batches.conference_id = ?
@@ -320,14 +321,17 @@ def add_submissions(
         ).fetchall()
         existing = {row["arxiv_id"] for row in rows}
         blank = {row["arxiv_id"] for row in rows if not (row["listing_title"] or "").strip()}
+        by_job = {row["arxiv_id"]: row["job_id"] for row in rows}
     fresh = [arxiv_id for arxiv_id in ids if arxiv_id not in existing]
     stale = [arxiv_id for arxiv_id in ids if arxiv_id in blank]
     if not fresh and not stale:
+        open_job_id = next((by_job[arxiv_id] for arxiv_id in ids if arxiv_id in by_job), "")
         return {
             "conference_id": conference_id,
             "added": 0,
             "already": len(ids),
             "arxiv_ids": [],
+            "open_job_id": open_job_id,
         }
     listings = arxiv_listings(fresh + stale)
     refreshed = 0
@@ -535,6 +539,81 @@ def delete_submission(conference_id: str, job_id: str) -> dict[str, str]:
     return {"deleted": job_id}
 
 
+def delete_conference(conference_id: str, owner: str | None = None) -> dict[str, str]:
+    with _ACTIVE_LOCK:
+        if conference_id in _ACTIVE:
+            raise BatchError(409, "this list is still being read")
+    with _db() as conn:
+        _ensure_desk(conn)
+        row = conn.execute(
+            "SELECT * FROM conferences WHERE conference_id = ?",
+            (conference_id,),
+        ).fetchone()
+        if row is None:
+            raise BatchError(404, "conference not found")
+        stored = row["owner"] if "owner" in row.keys() else None
+        if stored and stored != (owner or ""):
+            raise BatchError(404, "conference not found")
+        jobs = conn.execute(
+            """
+            SELECT paper_jobs.job_id
+            FROM paper_jobs
+            JOIN batches ON batches.batch_id = paper_jobs.batch_id
+            WHERE batches.conference_id = ?
+            """,
+            (conference_id,),
+        ).fetchall()
+        for job in jobs:
+            job_id = job["job_id"]
+            conn.execute("DELETE FROM paper_issues WHERE job_id = ?", (job_id,))
+            conn.execute("DELETE FROM paper_claims WHERE job_id = ?", (job_id,))
+            conn.execute("DELETE FROM job_events WHERE job_id = ?", (job_id,))
+        conn.execute(
+            """
+            DELETE FROM paper_jobs
+            WHERE batch_id IN (SELECT batch_id FROM batches WHERE conference_id = ?)
+            """,
+            (conference_id,),
+        )
+        conn.execute("DELETE FROM batches WHERE conference_id = ?", (conference_id,))
+        conn.execute("DELETE FROM desk_messages WHERE conference_id = ?", (conference_id,))
+        conn.execute("DELETE FROM conferences WHERE conference_id = ?", (conference_id,))
+        conn.commit()
+    return {"deleted": conference_id}
+
+
+def reread_paper(job_id: str) -> dict[str, str]:
+    with _db() as conn:
+        _ensure_desk(conn)
+        row = conn.execute(
+            "SELECT job_id, status FROM paper_jobs WHERE job_id = ?",
+            (job_id,),
+        ).fetchone()
+        if row is None:
+            raise BatchError(404, "paper not found")
+        if row["status"] == "running":
+            raise BatchError(409, "this paper is already being read")
+        conn.execute("DELETE FROM paper_issues WHERE job_id = ?", (job_id,))
+        conn.execute("DELETE FROM paper_claims WHERE job_id = ?", (job_id,))
+        conn.execute("DELETE FROM job_events WHERE job_id = ?", (job_id,))
+        conn.execute(
+            """
+            UPDATE paper_jobs
+            SET status = 'queued', specialist = NULL, issue_count = 0, fitness = NULL
+            WHERE job_id = ?
+            """,
+            (job_id,),
+        )
+        conn.commit()
+    threading.Thread(
+        target=_audit_job,
+        args=(job_id,),
+        daemon=True,
+        name=f"reread-{job_id[:8]}",
+    ).start()
+    return {"job_id": job_id, "status": "queued"}
+
+
 def start_run(conference_id: str, cap: int | None) -> dict[str, Any]:
     if cap is not None and cap < 1:
         raise BatchError(400, "cap must be at least 1")
@@ -673,7 +752,8 @@ def _insert_issue(conn: Any, job_id: str, issue: dict[str, Any]) -> None:
 def _persist_claims(conn: Any, job_id: str, claims: list[dict[str, Any]]) -> None:
     conn.execute("DELETE FROM paper_claims WHERE job_id = ?", (job_id,))
     for position, raw in enumerate(claims):
-        claim = DeskClaim.model_validate({**raw, "job_id": job_id})
+        payload = {key: value for key, value in raw.items() if not str(key).startswith("_")}
+        claim = DeskClaim.model_validate({**payload, "job_id": job_id})
         conn.execute(
             """
             INSERT INTO paper_claims (
@@ -747,11 +827,12 @@ def _empty_summary() -> dict[str, Any]:
         "unresolved": 0,
         "not_reproduced": 0,
         "insufficient": 0,
+        "not_checked": 0,
         "categories": {
-            "citations": {"resolved": 0, "total": 0},
-            "internal": {"supported": 0, "total": 0},
-            "numerical": {"consistent": 0, "total": 0},
-            "computational": {"reproduced": 0, "total": 0},
+            "citations": {"resolved": 0, "total": 0, "not_checked": 0},
+            "internal": {"supported": 0, "total": 0, "not_checked": 0},
+            "numerical": {"consistent": 0, "total": 0, "not_checked": 0},
+            "computational": {"reproduced": 0, "total": 0, "not_checked": 0},
         },
     }
 
@@ -773,22 +854,32 @@ def summarize_claims(claims: list[dict[str, Any]]) -> dict[str, Any]:
             summary["not_reproduced"] += 1
         elif verdict == "insufficient_evidence":
             summary["insufficient"] += 1
+        elif verdict in ("not_checked", "not_mentioned", "ambiguous"):
+            summary["not_checked"] += 1
         if kind == "citation":
             categories["citations"]["total"] += 1
             if verdict == "supported":
                 categories["citations"]["resolved"] += 1
+            if verdict in ("not_checked", "not_mentioned", "ambiguous"):
+                categories["citations"]["not_checked"] += 1
         elif kind == "semantic":
             categories["internal"]["total"] += 1
             if verdict == "supported":
                 categories["internal"]["supported"] += 1
+            if verdict in ("not_checked", "not_mentioned", "ambiguous"):
+                categories["internal"]["not_checked"] += 1
         elif kind in ("numerical", "numerical_comparison"):
             categories["numerical"]["total"] += 1
             if verdict == "supported":
                 categories["numerical"]["consistent"] += 1
+            if verdict in ("not_checked", "not_mentioned", "ambiguous"):
+                categories["numerical"]["not_checked"] += 1
         elif kind == "dataset":
             categories["computational"]["total"] += 1
             if verdict == "reproduced":
                 categories["computational"]["reproduced"] += 1
+            if verdict in ("not_checked", "not_mentioned", "ambiguous"):
+                categories["computational"]["not_checked"] += 1
     return summary
 
 
@@ -986,6 +1077,18 @@ _CATALOG_NAME = {
 }
 
 
+def _legend_line(summary: dict[str, Any]) -> str:
+    return " · ".join(
+        [
+            f"{int(summary.get('supported') or 0)} supported",
+            f"{int(summary.get('contradicted') or 0)} contradicted",
+            f"{int(summary.get('unresolved') or 0)} unresolved",
+            f"{int(summary.get('insufficient') or 0)} needs review",
+            f"{int(summary.get('not_checked') or 0)} not checked",
+        ]
+    )
+
+
 def _summary_line(summary: dict[str, Any]) -> str:
     analyzed = int(summary.get("analyzed") or 0)
     if analyzed <= 0:
@@ -1022,7 +1125,11 @@ def _category_lines(summary: dict[str, Any]) -> list[str]:
         total = int(bucket.get("total") or 0)
         if total <= 0:
             continue
-        lines.append(f"{label} {int(bucket.get(key) or 0)} / {total}")
+        shown = f"{label} {int(bucket.get(key) or 0)} / {total}"
+        unchecked = int(bucket.get("not_checked") or 0)
+        if unchecked:
+            shown += f" · {unchecked} not checked"
+        lines.append(shown)
     return lines
 
 
@@ -1136,6 +1243,7 @@ def render_report(paper: dict[str, Any], conference_name: str = "") -> str:
         summary_line = _summary_line(summary)
         if summary_line:
             lines.extend(["", summary_line])
+            lines.append(_legend_line(summary))
         category_lines = _category_lines(summary)
         if category_lines:
             lines.append("")
@@ -1285,7 +1393,7 @@ def ask_conference(
             "trace": [],
             "quotes": [],
         }
-    answer = _grok_answer(desk["name"], asked, chosen) or _local_answer(chosen)
+    answer, action = voice.finish(asked, chosen, _grok_answer, _local_answer, desk['name'])
     trace, quotes = _reading(chosen, answer)
     cited = [paper["arxiv_id"] for paper in chosen]
     _store_exchange(conference_id, asked, answer, trace, quotes, cited)
@@ -1294,6 +1402,7 @@ def ask_conference(
         "papers": cited,
         "trace": trace,
         "quotes": quotes,
+        "action": action,
     }
 
 
@@ -1511,7 +1620,7 @@ def _local_answer(papers: list[dict[str, Any]]) -> str:
             lines.append(f"{label} ({paper['arxiv_id']}) is still queued.")
             continue
         if not issues:
-            lines.append(f"{label} ({paper['arxiv_id']}) has no fabricated-claim flags.")
+            lines.append(f"{label} ({paper['arxiv_id']}) has nothing to report.")
             continue
         for issue in issues:
             lines.append(
@@ -1534,7 +1643,8 @@ def _grok_answer(conference: str, question: str, papers: list[dict[str, Any]]) -
         text = (paper.get("paper_text") or "").strip() or (paper.get("abstract") or "").strip()
         text = text[:4000]
         blocks.append(
-            f"{paper.get('title') or 'Untitled'} @{paper['arxiv_id']} status {paper['status']}\n{issue_lines}\n{text}"
+            f"{paper.get('title') or 'Untitled'} @{paper['arxiv_id']} status {paper['status']}\n"
+            f"Issues:\n{issue_lines}\nClaims:\n{voice.claim_lines(paper)}\n{text}"
         )
     user = f"Conference: {conference}\n\n" + "\n\n".join(blocks) + f"\n\nQuestion: {question}"
     try:

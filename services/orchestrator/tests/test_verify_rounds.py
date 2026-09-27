@@ -106,3 +106,18 @@ def test_three_uncertain_rounds_require_human_review(tmp_path, monkeypatch) -> N
     assert "Round 3: widened to ±2 sentences" in claim["steps"]
     assert claim["text"] == original
     assert not retry_guard_dropped(original, claim["text"])
+
+
+def test_widen_keeps_the_real_neighbor_and_the_window_marker() -> None:
+    from verify import _widen
+
+    claim = _claim("We show the bound holds for every trial we ran.", "semantic")
+    claim["_neighbors"] = [
+        {"page": 2, "section": "results", "text": "The previous sentence names the training split."},
+        {"page": 2, "section": "results", "text": "The next sentence reports the held-out score."},
+    ]
+    _widen(claim, 2)
+    texts = [item["text"] for item in claim["evidence"]]
+    assert "The previous sentence names the training split." in texts
+    assert "The next sentence reports the held-out score." in texts
+    assert any(text.startswith("Neighbor window ±2") for text in texts)

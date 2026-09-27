@@ -7,12 +7,22 @@ import { MorphLink } from "../morph-link";
 import { PdfView } from "../pdf-view";
 
 type YouTurn = { role: "you"; text: string };
+type DeskAction = {
+  type: "open" | "explain" | "list" | "refuse";
+  job_id?: string;
+  arxiv_id?: string;
+  title?: string;
+  page?: number | null;
+  text?: string;
+  formula?: string;
+};
 type DeskTurn = {
   role: "desk";
   text: string;
   trace: TraceStep[];
   quotes: Quote[];
   papers: string[];
+  action?: DeskAction | null;
 };
 type Turn = YouTurn | DeskTurn;
 
@@ -170,7 +180,9 @@ export function AskDesk({
         trace?: TraceStep[];
         quotes?: Quote[];
         papers?: string[];
+        action?: DeskAction | null;
       };
+      const action = body.action ?? null;
       setTurns((current) => [
         ...current,
         {
@@ -179,8 +191,21 @@ export function AskDesk({
           trace: body.trace ?? [],
           quotes: body.quotes ?? [],
           papers: body.papers ?? [],
+          action,
         },
       ]);
+      if (action?.type === "open" && action.job_id) {
+        openQuote({
+          quote_id: `bot-${action.job_id}`,
+          job_id: action.job_id,
+          arxiv_id: action.arxiv_id || "",
+          title: action.title || "Paper",
+          page: typeof action.page === "number" ? action.page : null,
+          text: action.text || "",
+          issue_type: "",
+          reason: "",
+        });
+      }
     } catch {
       setTurns((current) => [
         ...current,
@@ -192,9 +217,9 @@ export function AskDesk({
   }
 
   const starters = [
-    "Which papers have a fabricated citation?",
-    papers[0] ? `What failed on @${nameOf(papers[0])}?` : "What is still queued?",
-    "Which papers look like a one-shot submission?",
+    "List the findings",
+    "Open the first finding",
+    papers[0] ? `Explain the formula on @${nameOf(papers[0])}` : "Explain the formula",
   ];
   const passageOpen = panel !== null && !onOpenQuote;
 
@@ -210,7 +235,7 @@ export function AskDesk({
                   Ask {conferenceName}
                 </h2>
                 <p className="mt-4 max-w-md text-sm leading-6 text-[#6b645c]">
-                  {papers.length} papers in this conversation. Type @ and a paper name to pin a question.
+                  {papers.length} papers in this conversation. Type @ and a paper name to pin a question. The desk can list findings, open a page, and explain a stored formula. It does not change a verdict.
                 </p>
                 <ul className="mt-10 max-w-lg">
                   {starters.map((prompt, index) => (
@@ -495,6 +520,29 @@ function DeskReply({
             </div>
           ) : null}
           <p className="text-sm leading-7 text-[#1c1915]">{turn.text}</p>
+          {turn.action?.type === "open" && turn.action.job_id ? (
+            <button
+              type="button"
+              className="mt-3 rounded-full bg-white px-3 py-1 text-xs text-[#1c1915] ring-1 ring-[#e4dcd0]"
+              onClick={() =>
+                onOpenQuote({
+                  quote_id: `bot-${turn.action?.job_id}`,
+                  job_id: turn.action?.job_id || "",
+                  arxiv_id: turn.action?.arxiv_id || "",
+                  title: turn.action?.title || "Paper",
+                  page: typeof turn.action?.page === "number" ? turn.action.page : null,
+                  text: turn.action?.text || "",
+                  issue_type: "",
+                  reason: "",
+                })
+              }
+            >
+              {typeof turn.action.page === "number" ? `Open page ${turn.action.page}` : "Open this page"}
+            </button>
+          ) : null}
+          {turn.action?.type === "explain" && turn.action.formula ? (
+            <p className="mt-2 text-xs text-[#6b645c]">Formula {turn.action.formula}</p>
+          ) : null}
           {turn.quotes.length > 0 ? (
             <div className="mt-3 flex flex-wrap gap-2">
               {turn.quotes.map((quote, index) => (

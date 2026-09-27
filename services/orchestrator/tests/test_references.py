@@ -23,6 +23,36 @@ def test_parse_splits_numbered_entries_and_keeps_title_year_and_doi() -> None:
     assert "calibration bounds" in smith["title"].lower()
 
 
+def test_prose_bibliography_keeps_the_title_and_authors() -> None:
+    from catalogs import score_candidate
+
+    entries = parse_references(
+        "[13] Sepp Hochreiter and Jürgen Schmidhuber. Long short-term memory. "
+        "Neural computation, 9(8):1735–1780, 1997."
+    )
+    entry = entries[0]
+    assert entry["number"] == "13"
+    assert entry["year"] == "1997"
+    assert "Hochreiter" in entry["authors"]
+    assert "Schmidhuber" in entry["authors"]
+    assert entry["title"].lower().startswith("long short-term memory")
+    score = score_candidate(
+        entry,
+        {"title": "Long Short-Term Memory", "year": "1997", "authors": ["Hochreiter"], "doi": ""},
+    )
+    assert score >= 0.85
+    partial = score_candidate(
+        {"title": "A decomposable attention model", "year": "2016", "authors": ["Parikh"], "doi": ""},
+        {
+            "title": "A Decomposable Attention Model for Natural Language Inference",
+            "year": "2016",
+            "authors": ["Parikh"],
+            "doi": "",
+        },
+    )
+    assert partial >= 0.85
+
+
 def test_match_parenthetical_and_bracket_citations() -> None:
     entries = parse_references(f"[1] {VASWANI[3:]}\n\n{SMITH}")
     parenthetical = match_entry("The design follows (Vaswani et al., 2017).", entries)

@@ -16,6 +16,7 @@ export function PdfView({
   quote = "",
   marks,
   focusPage = null,
+  focusText = "",
   focusToken = 0,
 }: {
   jobId: string;
@@ -23,11 +24,14 @@ export function PdfView({
   quote?: string;
   marks?: PdfMark[];
   focusPage?: number | null;
+  focusText?: string;
   focusToken?: number;
 }) {
   const hostRef = useRef<HTMLDivElement>(null);
   const [status, setStatus] = useState<"loading" | "ready" | "error">("loading");
   const [miss, setMiss] = useState(false);
+  const [pageNow, setPageNow] = useState(1);
+  const [pageCount, setPageCount] = useState(0);
   const markKey = JSON.stringify(marks ?? null);
 
   useEffect(() => {
@@ -95,12 +99,8 @@ export function PdfView({
         if (markQuote(host!, mark.page, mark.text, mark.role)) found = true;
       }
       setMiss(drawn.length > 0 && !found);
-      const reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-      const targetNumber = focusPage || drawn.find((mark) => mark.role === "contradicts")?.page || page || 1;
-      const target =
-        host!.querySelector<HTMLElement>(`[data-page="${targetNumber}"]`) ??
-        host!.querySelector<HTMLElement>(".pdf-page");
-      target?.scrollIntoView({ block: "start", behavior: reduce ? "auto" : "smooth" });
+      scrollToQuote(host!, focusPage, focusText);
+      notePage(host!, setPageNow, setPageCount);
       setStatus("ready");
     }
 
@@ -110,17 +110,14 @@ export function PdfView({
     return () => {
       cancelled = true;
     };
-  }, [jobId, page, quote, markKey, focusPage]);
+  }, [jobId, page, quote, markKey, focusPage, focusText]);
 
   useEffect(() => {
     if (!focusToken) return;
     const host = hostRef.current;
     if (!host) return;
-    const reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-    host
-      .querySelector<HTMLElement>(`[data-page="${focusPage || 1}"]`)
-      ?.scrollIntoView({ block: "start", behavior: reduce ? "auto" : "smooth" });
-  }, [focusToken, focusPage]);
+    scrollToQuote(host, focusPage, focusText);
+  }, [focusToken, focusPage, focusText]);
 
   return (
     <div className="flex h-full min-h-0 flex-col bg-[#ebe4d6]">
@@ -132,7 +129,20 @@ export function PdfView({
           The clipping is not on that page, so this opens at the start of the PDF.
         </p>
       ) : null}
-      <div ref={hostRef} className="min-h-0 flex-1 overflow-auto px-3 py-4" />
+      <div className="relative min-h-0 flex-1">
+        <div
+          ref={hostRef}
+          onScroll={() => {
+            if (hostRef.current) notePage(hostRef.current, setPageNow, setPageCount);
+          }}
+          className="h-full min-h-0 overflow-auto px-3 py-4"
+        />
+        {pageCount > 0 ? (
+          <p className="pointer-events-none absolute right-3 bottom-3 rounded-full bg-[#f4f0e6]/90 px-2 py-1 text-[11px] text-[#1c1915] ring-1 ring-[#e4dcd0]">
+            Page {pageNow} of {pageCount}
+          </p>
+        ) : null}
+      </div>
       {status === "loading" ? (
         <p className="px-4 pb-3 text-xs text-[#6b645c]">Opening the PDF…</p>
       ) : null}
@@ -140,10 +150,51 @@ export function PdfView({
   );
 }
 
+function notePage(
+  root: HTMLElement,
+  setNow: (page: number) => void,
+  setCount: (count: number) => void,
+): void {
+  const pages = [...root.querySelectorAll<HTMLElement>(".pdf-page")];
+  if (!pages.length) return;
+  const box = root.getBoundingClientRect();
+  let current = 1;
+  for (const node of pages) {
+    const rect = node.getBoundingClientRect();
+    if (rect.top <= box.top + box.height * 0.35) {
+      current = Number(node.dataset.page || 1);
+    }
+  }
+  setNow(current);
+  setCount(pages.length);
+}
+
+function scrollToQuote(root: HTMLElement, page: number | null, quote: string): void {
+  const needle = quote.replace(/\s+/g, "").toLowerCase().slice(0, 24);
+  const bands = [...root.querySelectorAll<HTMLElement>(".pdf-band")];
+  const onPage = page ? root.querySelector<HTMLElement>(`[data-page="${page}"]`) : null;
+  const match =
+    bands.find((band) => needle.length >= 8 && (band.dataset.quote ?? "").startsWith(needle.slice(0, 12))) ??
+    onPage?.querySelector<HTMLElement>(".pdf-band") ??
+    bands[0] ??
+    onPage ??
+    root.querySelector<HTMLElement>(".pdf-page");
+  if (!match) return;
+  const reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  match.scrollIntoView({ block: "center", behavior: reduce ? "auto" : "smooth" });
+}
+
 function markQuote(root: HTMLElement, page: number | null, quote: string, role: string): boolean {
   const full = quote.replace(/\s+/g, "").toLowerCase();
+  const words = quote
+    .replace(/\s+/g, " ")
+    .trim()
+    .split(" ")
+    .slice(0, 6)
+    .join("")
+    .toLowerCase();
   const number = quote.match(/\d+\.\d+/)?.[0] ?? "";
-  const needles = [full.slice(0, 48), number].filter((item) => item.length >= 4);
+  const needles = [full.slice(0, 48), words, number].filter((item) => item.length >= 4);
   for (const needle of needles) {
     if (placeBand(root, page, needle, role, needle.length)) return true;
   }
@@ -151,8 +202,16 @@ function markQuote(root: HTMLElement, page: number | null, quote: string, role: 
 }
 
 function placeBand(root: HTMLElement, page: number | null, needle: string, role: string, span: number): boolean {
-  const pageEl = root.querySelector<HTMLElement>(`[data-page="${page && page > 0 ? page : 1}"]`);
-  if (!pageEl) return false;
+  const pages = [...root.querySelectorAll<HTMLElement>(".pdf-page")];
+  const preferred = root.querySelector<HTMLElement>(`[data-page="${page && page > 0 ? page : 1}"]`);
+  const ordered = preferred ? [preferred, ...pages.filter((item) => item !== preferred)] : pages;
+  for (const pageEl of ordered) {
+    if (placeOnPage(pageEl, needle, role, span)) return true;
+  }
+  return false;
+}
+
+function placeOnPage(pageEl: HTMLElement, needle: string, role: string, span: number): boolean {
   const layer = pageEl.querySelector(".textLayer");
   if (!layer) return false;
   const nodes: { node: Text; offset: number }[] = [];
@@ -181,6 +240,7 @@ function placeBand(root: HTMLElement, page: number | null, needle: string, role:
     const mark = document.createElement("div");
     mark.className = role === "contradicts" ? "pdf-band pdf-band-contradicts" : "pdf-band";
     mark.dataset.role = role;
+    mark.dataset.quote = needle.slice(0, 24);
     mark.style.left = `${rect.left - pageRect.left}px`;
     mark.style.top = `${rect.top - pageRect.top}px`;
     mark.style.width = `${rect.width}px`;

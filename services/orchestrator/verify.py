@@ -128,7 +128,7 @@ def review_uncertain(
             if not _uncertain(claim):
                 break
         else:
-            if _uncertain(claim):
+            if _uncertain(claim) and str(claim.get("claim_type") or "") == "semantic":
                 claim["verdict"] = "insufficient_evidence"
                 claim["confidence"] = float(claim.get("confidence") or 0)
                 claim["reason"] = "Requires human review"
@@ -164,6 +164,20 @@ def _legacy_claim(claim: dict[str, Any]) -> Claim:
 
 def _widen(claim: dict[str, Any], neighbors: int) -> None:
     evidence = list(claim.get("evidence") or [])
+    window = list(claim.get("_neighbors") or [])[: max(neighbors, 0) * 2]
+    for row in window:
+        text = str(row.get("text") or "").strip()
+        if not text:
+            continue
+        evidence.append(
+            {
+                "page": row.get("page") if row.get("page") is not None else claim.get("page"),
+                "section": str(row.get("section") or claim.get("section") or "results"),
+                "text": text,
+                "role": "context",
+                "source": "paper",
+            }
+        )
     evidence.append(
         {
             "page": claim.get("page"),

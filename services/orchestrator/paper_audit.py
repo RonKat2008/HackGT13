@@ -263,7 +263,15 @@ def audit_paper(
             )
 
     def verify() -> None:
-        claim_verify.judge_claims(typed_claims)
+        pending: list[dict[str, Any]] = []
+        for claim in typed_claims:
+            if str(claim.get("claim_type") or "") == "numerical_comparison" and not claim.get("computation"):
+                steps = list(claim.get("steps") or [])
+                steps.append("No nearby table, so this gain was left unchecked.")
+                claim["steps"] = steps
+                continue
+            pending.append(claim)
+        claim_verify.judge_claims(pending)
         _settle_local(typed_claims, sections, kaggle, path)
 
     def critic() -> None:
@@ -314,6 +322,8 @@ def audit_paper(
         emit(name, "finished", finished)
     _annotate_pages(path, issues)
 
+    for claim in typed_claims:
+        claim.pop("_neighbors", None)
     result: dict[str, Any] = {
         "issues": issues,
         "claims": typed_claims,
@@ -376,6 +386,7 @@ def _attach_evidence_claim(index: evidence_index.PaperIndex, claim: dict[str, An
             }
         )
     claim["evidence"] = evidence
+    claim["_neighbors"] = index.around(str(claim.get("text") or ""), 2)
     steps = list(claim.get("steps") or [])
     steps.append("Retrieved supporting evidence")
     steps.append("Searched for contradictory evidence")
@@ -722,7 +733,8 @@ def _settle_abstract_number(claim: dict[str, Any], results: str, path: str | Pat
     numbers = NUMBER_RE.findall(str(claim.get("text") or ""))
     if not numbers:
         return
-    missing = [token for token in numbers if token not in results]
+    elsewhere = _paper_without_claim(path, str(claim.get("text") or ""))
+    missing = [token for token in numbers if token not in results and token not in elsewhere]
     steps = list(claim.get("steps") or [])
     steps.append("Compared the abstract number with the results.")
     claim["steps"] = steps
@@ -753,6 +765,22 @@ def _settle_abstract_number(claim: dict[str, Any], results: str, path: str | Pat
         }
     )
     claim["evidence"] = evidence
+
+
+def _paper_without_claim(path: str | Path, claim_text: str) -> str:
+    doc = fitz.open(path)
+    try:
+        body = "\n".join(page.get_text() for page in doc)
+    finally:
+        doc.close()
+    flat_body = re.sub(r"\s+", " ", body)
+    flat_claim = re.sub(r"\s+", " ", claim_text).strip()
+    if flat_claim:
+        flat_body = flat_body.replace(flat_claim, " ", 1)
+    for table in table_check.read_tables(path):
+        for label, value in table.get("rows") or []:
+            flat_body += f" {label} {value}"
+    return flat_body
 
 
 def _text_page(path: str | Path, text: str) -> int | None:

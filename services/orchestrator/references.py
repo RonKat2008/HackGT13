@@ -51,7 +51,7 @@ def _entry(chunk: str) -> dict[str, Any]:
     doi_match = claim_extract.DOI_RE.search(chunk)
     doi = doi_match.group(1).rstrip(").,;") if doi_match else ""
     years = YEAR_RE.findall(chunk)
-    year = years[0] if years else ""
+    year = years[-1] if years else ""
     quoted = QUOTE_RE.search(chunk)
     title = quoted.group(1).strip() if quoted else _title_after_year(chunk, year)
     before_year = chunk.split(year, 1)[0] if year else chunk
@@ -61,6 +61,11 @@ def _entry(chunk: str) -> dict[str, Any]:
             continue
         if surname not in authors:
             authors.append(surname)
+    prose_authors, prose_title = _authors_and_title(chunk)
+    if not authors:
+        authors = prose_authors
+    if not title:
+        title = prose_title
     return {
         "raw": " ".join(chunk.split()),
         "number": number,
@@ -69,6 +74,28 @@ def _entry(chunk: str) -> dict[str, Any]:
         "title": title,
         "authors": authors,
     }
+
+
+def _authors_and_title(chunk: str) -> tuple[list[str], str]:
+    """Read 'Ada Lovelace and Grace Hopper. A real title. Venue, 1997.'"""
+    body = NUMBER_RE.sub("", chunk, count=1).strip()
+    parts = re.split(r"(?<![A-Z])\.\s+", body, maxsplit=2)
+    if len(parts) < 2:
+        return [], ""
+    author_blob, title = parts[0], parts[1].strip(" .")
+    if "," in author_blob and not re.search(r"\band\b", author_blob, re.I):
+        return [], title if len(title) >= 8 else ""
+    authors: list[str] = []
+    for person in re.split(r",|\band\b", author_blob):
+        words = [word for word in re.findall(r"[A-Za-z][A-Za-z'\-]{2,}", person) if word[:1].isupper()]
+        if not words:
+            continue
+        surname = words[-1]
+        if surname not in authors:
+            authors.append(surname)
+    if len(title) < 8:
+        return authors, ""
+    return authors, title
 
 
 def _title_after_year(chunk: str, year: str) -> str:

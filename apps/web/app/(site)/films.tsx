@@ -76,6 +76,50 @@ export function Films() {
   );
 }
 
+const SHEETS = [
+  {
+    kicker: "Citation",
+    title: "Vaswani et al., 2017",
+    body: "The reference resolves in the catalogs.",
+    mark: "Resolved",
+    tone: "text-[#2f6b4f]",
+  },
+  {
+    kicker: "Number",
+    title: "95.2% in the abstract",
+    body: "The same figure is absent from the results.",
+    mark: "Contradicted",
+    tone: "text-[#8c3a2f]",
+  },
+  {
+    kicker: "Needs a person",
+    title: "We show the model generalizes",
+    body: "Three reads stayed unsure. A chair decides.",
+    mark: "Unsettled",
+    tone: "text-[#8a6a2f]",
+  },
+];
+
+export function HeroStage() {
+  return (
+    <div className="hero-stage" aria-hidden="true">
+      <div className="folio">
+        <div className="folio-ground" />
+        <div className="folio-book">
+          {SHEETS.map((sheet, index) => (
+            <article key={sheet.kicker} className={`folio-panel folio-panel-${index + 1}`}>
+              <p className="text-[11px] tracking-[0.16em] text-[#8c3a2f]">{sheet.kicker}</p>
+              <h2 className="mt-3 font-[family-name:var(--desk-serif)] text-xl leading-tight">{sheet.title}</h2>
+              <p className="mt-4 text-sm leading-6 text-[#6b645c]">{sheet.body}</p>
+              <p className={`mt-6 text-xs ${sheet.tone}`}>{sheet.mark}</p>
+            </article>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export function DeskStill() {
   return (
     <div className="overflow-hidden rounded-[1.75rem] bg-[#f7f3ea] ring-1 ring-[#e4dcd0]" aria-hidden="true">

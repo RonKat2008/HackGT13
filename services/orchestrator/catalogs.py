@@ -220,7 +220,11 @@ def _s2_candidates(payload: Any) -> list[dict[str, Any]]:
 def _title_score(left: str, right: str) -> float:
     if not left or not right:
         return 0.0
-    return SequenceMatcher(None, _plain(left), _plain(right)).ratio()
+    plain_left, plain_right = _plain(left), _plain(right)
+    shorter, longer = (plain_left, plain_right) if len(plain_left) <= len(plain_right) else (plain_right, plain_left)
+    if len(shorter) >= 20 and shorter in longer:
+        return 0.95
+    return SequenceMatcher(None, plain_left, plain_right).ratio()
 
 
 def _year_close(left: Any, right: Any) -> bool:
@@ -247,7 +251,8 @@ def _plain(value: str) -> str:
 
 
 def _cache_key(query: str) -> str:
-    return hashlib.sha256(_plain(query).encode()).hexdigest()
+    # v2: scores depend on the bibliography title, so older zero-score rows are not reused.
+    return hashlib.sha256(f"v2\n{_plain(query)}".encode()).hexdigest()
 
 
 def _read_cache(key: str) -> dict[str, Any] | None:

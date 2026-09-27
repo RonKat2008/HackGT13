@@ -68,6 +68,18 @@ def split_sentences(text: str) -> list[str]:
     return out
 
 
+def _is_heading(sentence: str) -> bool:
+    compact = " ".join(sentence.split())
+    if re.match(r"^\d+(?:\.\d+)+\s+\S", compact) and len(compact.split()) <= 10:
+        return True
+    return False
+
+
+def _is_arxiv_banner(sentence: str) -> bool:
+    compact = " ".join(sentence.split())
+    return bool(re.match(r"arXiv:\s*\d{4}\.\d{4,5}", compact, re.I)) and len(compact) < 120
+
+
 def _is_citation(sentence: str) -> bool:
     return bool(
         PAREN_CITATION.search(sentence)
@@ -187,7 +199,11 @@ def extract_claims(path: str | Path, job_id: str, sections: dict[str, str]) -> l
             if section in SKIP_SECTIONS:
                 continue
             for sentence in split_sentences(body):
+                if _is_arxiv_banner(sentence) or _is_heading(sentence):
+                    continue
                 for claim_type in classify_types(sentence):
+                    if claim_type == ClaimType.NUMERICAL and section != "abstract":
+                        continue
                     text = sentence
                     if claim_type != ClaimType.CITATION and _is_citation(sentence):
                         stripped = _without_citation(sentence)

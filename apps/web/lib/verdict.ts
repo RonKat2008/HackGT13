@@ -167,15 +167,31 @@ export function summaryLine(summary: Summary): string {
   return parts.join(" · ");
 }
 
+export function legendLine(summary: Summary): string {
+  if (!summary || summary.analyzed === 0) return "";
+  return [
+    `${summary.supported} supported`,
+    `${summary.contradicted} contradicted`,
+    `${summary.unresolved} unresolved`,
+    `${summary.insufficient} needs review`,
+    `${summary.not_checked ?? 0} not checked`,
+  ].join(" · ");
+}
+
+function counted(pass: number, total: number, unchecked: number | undefined): string {
+  const base = `${pass} / ${total}`;
+  return unchecked ? `${base} · ${unchecked} not checked` : base;
+}
+
 export function categoryLines(summary: Summary): { label: string; value: string; total: number }[] {
   const c = summary.categories;
   return [
-    { label: "Citations resolved", value: `${c.citations.resolved} / ${c.citations.total}`, total: c.citations.total },
-    { label: "Internal consistency", value: `${c.internal.supported} / ${c.internal.total}`, total: c.internal.total },
-    { label: "Numerical consistency", value: `${c.numerical.consistent} / ${c.numerical.total}`, total: c.numerical.total },
+    { label: "Citations resolved", value: counted(c.citations.resolved, c.citations.total, c.citations.not_checked), total: c.citations.total },
+    { label: "Internal consistency", value: counted(c.internal.supported, c.internal.total, c.internal.not_checked), total: c.internal.total },
+    { label: "Numerical consistency", value: counted(c.numerical.consistent, c.numerical.total, c.numerical.not_checked), total: c.numerical.total },
     {
       label: "Computational reproduction",
-      value: `${c.computational.reproduced} / ${c.computational.total}`,
+      value: counted(c.computational.reproduced, c.computational.total, c.computational.not_checked),
       total: c.computational.total,
     },
   ];

@@ -15,10 +15,13 @@ from batches import (
     get_conference,
     patch_paper,
 )
+import desk as desk_module
+import voice
 from desk import (
     add_submissions,
     add_upload,
     ask_conference,
+    delete_conference,
     delete_submission,
     conference_desk,
     conference_messages,
@@ -30,6 +33,7 @@ from desk import (
     paper_desk,
     paper_file,
     paper_report,
+    reread_paper,
     run_cell,
     signup,
     start_run,
@@ -40,6 +44,8 @@ from models import JevLabel, Patch, PatchKind, PatchStatus, Product, Run
 from playbook import top_patches
 from specialists import run_specialist
 from store import connect, default_db_path, get_run, insert_run, record_event, save_patch
+
+desk_module.ASK_PROMPT = voice.PROMPT
 
 app = FastAPI()
 app.add_middleware(
@@ -90,6 +96,11 @@ class CellBody(BaseModel):
 class AskBody(BaseModel):
     question: str
     mentions: list[str] = []
+
+
+class SpeakBody(BaseModel):
+    question: str = ""
+    claim: str = ""
 
 
 class AuthBody(BaseModel):
@@ -345,6 +356,16 @@ async def desk_uploads(conference_id: str, request: Request) -> dict:
         _batch_http(exc)
 
 
+@app.delete("/desk/conferences/{conference_id}")
+def desk_delete_conference(
+    conference_id: str, owner: str | None = Query(default=None)
+) -> dict:
+    try:
+        return delete_conference(conference_id, owner)
+    except BatchError as exc:
+        _batch_http(exc)
+
+
 @app.delete("/desk/conferences/{conference_id}/papers/{job_id}")
 def desk_delete_paper(conference_id: str, job_id: str) -> dict:
     try:
@@ -418,6 +439,14 @@ def desk_reports_zip(conference_id: str) -> Response:
     )
 
 
+@app.post("/desk/papers/{job_id}/reread")
+def desk_paper_reread(job_id: str) -> dict:
+    try:
+        return reread_paper(job_id)
+    except BatchError as exc:
+        _batch_http(exc)
+
+
 @app.post("/desk/cells")
 def desk_cell(body: CellBody) -> dict:
     try:
@@ -438,6 +467,14 @@ def desk_messages(conference_id: str) -> dict:
 def desk_ask(conference_id: str, body: AskBody) -> dict:
     try:
         return ask_conference(conference_id, body.question, body.mentions)
+    except BatchError as exc:
+        _batch_http(exc)
+
+
+@app.post("/desk/papers/{job_id}/speak")
+def desk_speak(job_id: str, body: SpeakBody) -> dict:
+    try:
+        return voice.speak(paper_desk(job_id), body.question, body.claim)
     except BatchError as exc:
         _batch_http(exc)
 

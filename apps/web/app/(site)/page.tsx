@@ -1,5 +1,6 @@
 import Link from "next/link";
-import { DeskStill, Films } from "./films";
+import { Films, HeroStage } from "./films";
+import { FindingIndex, StageWalk } from "./reading";
 
 const steps = [
   {
@@ -16,35 +17,44 @@ const steps = [
   },
 ];
 
-const questions = [
-  "What did the paper claim?",
-  "What did ArxAudit investigate?",
-  "What evidence did it find?",
-  "Why should the reviewer care?",
-];
-
 export default function HomePage() {
   return (
     <main>
-      <section className="mx-auto grid max-w-6xl items-center gap-12 px-6 py-16 lg:grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)] lg:py-24">
-        <div>
-          <p className="text-[11px] tracking-[0.18em] text-[#8c3a2f]">FOR CONFERENCE CHAIRS</p>
-          <h1 className="mt-4 font-[family-name:var(--desk-serif)] text-6xl leading-[0.95] tracking-tight sm:text-7xl">
-            A quiet desk
-          </h1>
-          <p className="mt-6 max-w-md border-l border-[#c4a15a] pl-4 text-lg leading-8 text-[#1c1915]">
-            for the papers a chair is responsible for.
-          </p>
-          <div className="mt-10 flex flex-wrap items-center gap-4">
-            <Link href="/signup" className="rounded-full bg-[#1c1915] px-5 py-3 text-sm text-[#f4f0e6]">
-              Create account
-            </Link>
-            <Link href="#how" className="text-sm underline decoration-[#c4a15a] underline-offset-4">
-              Watch how it works
-            </Link>
+      <section className="relative overflow-hidden">
+        <div className="hero-wash" aria-hidden="true" />
+        <div className="relative mx-auto grid max-w-6xl items-center gap-10 px-6 py-16 lg:grid-cols-[minmax(0,0.85fr)_minmax(0,1.15fr)] lg:py-20">
+          <div>
+            <p className="hero-kicker text-[11px] tracking-[0.18em] text-[#8c3a2f]">FOR CONFERENCE CHAIRS</p>
+            <h1 className="mt-4 font-[family-name:var(--desk-serif)] text-6xl leading-[0.92] tracking-tight sm:text-7xl">
+              <span className="hero-word">A quiet desk</span>
+            </h1>
+            <p className="hero-lede mt-6 max-w-md border-l border-[#c4a15a] pl-4 text-lg leading-8 text-[#1c1915]">
+              for the papers a chair is responsible for.
+            </p>
+            <p className="hero-stages mt-6 text-xs tracking-[0.14em] text-[#6b645c]" aria-hidden="true">
+              <span>Parse</span>
+              <span>Claims</span>
+              <span>Evidence</span>
+              <span>Citations</span>
+              <span>Numbers</span>
+              <span>Tables</span>
+              <span>Stamp</span>
+            </p>
+            <div className="hero-actions mt-10 flex flex-wrap items-center gap-4">
+              <Link href="/signup" className="rounded-full bg-[#1c1915] px-5 py-3 text-sm text-[#f4f0e6]">
+                Create account
+              </Link>
+              <Link href="#how" className="text-sm underline decoration-[#c4a15a] underline-offset-4">
+                Watch how it works
+              </Link>
+            </div>
           </div>
+          <HeroStage />
         </div>
-        <DeskStill />
+      </section>
+
+      <section className="mx-auto max-w-6xl px-6 pb-8 pt-4">
+        <StageWalk />
       </section>
 
       <section id="how" className="mx-auto max-w-6xl px-6 pb-20">
@@ -64,16 +74,15 @@ export default function HomePage() {
             </li>
           ))}
         </ol>
-        <div className="mt-12 max-w-2xl">
-          <p className="text-sm leading-7 text-[#1c1915]">
-            Each finding on the desk answers four questions for the chair:
-          </p>
-          <ol className="mt-4 space-y-2 text-sm leading-7 text-[#1c1915]">
-            {questions.map((question) => (
-              <li key={question}>{question}</li>
-            ))}
-          </ol>
-          <p className="mt-4 text-sm leading-7 text-[#6b645c]">A likeness score is not a verdict.</p>
+        <div className="mt-16">
+          <p className="text-[11px] tracking-[0.18em] text-[#8c3a2f]">A FINDING</p>
+          <h2 className="mt-3 max-w-xl font-[family-name:var(--desk-serif)] text-4xl leading-tight">
+            Four questions, then the sentence beside them.
+          </h2>
+          <div className="mt-8">
+            <FindingIndex />
+          </div>
+          <p className="mt-6 text-sm leading-7 text-[#6b645c]">A likeness score is not a verdict.</p>
         </div>
       </section>
 
