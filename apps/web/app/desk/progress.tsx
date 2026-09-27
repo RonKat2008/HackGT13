@@ -2,10 +2,98 @@
 
 import Link from "next/link";
 import { useEffect, useState } from "react";
-import { EXAMPLE_JOB_ID, type ConferenceDesk, type Paper } from "@/lib/desk";
-import { categoryLines, failureWhere, findingCount, legendLine, paperLabel, summaryLine, summaryOf } from "@/lib/verdict";
+import {
+  EXAMPLE_JOB_ID,
+  type ConferenceDesk,
+  type ConferenceProgress,
+  type Paper,
+} from "@/lib/desk";
+import {
+  categoryLines,
+  failureWhere,
+  findingCount,
+  legendLine,
+  paperLabel,
+  summaryLine,
+  summaryOf,
+  verdictTone,
+} from "@/lib/verdict";
 import { AskDesk } from "./[id]/ask";
+import { MorphLink } from "./morph-link";
 import { LABELS, ORDER } from "./specialists";
+
+const POLL_MS = 2000;
+
+export function conferenceProgressFromPapers(papers: Paper[]): ConferenceProgress {
+  let done = 0;
+  let findings = 0;
+  let running = 0;
+  let queued = 0;
+  for (const paper of papers) {
+    if (paper.status === "passed" || paper.status === "contradicted" || paper.status === "error") done += 1;
+    if (paper.status === "contradicted") findings += 1;
+    if (paper.status === "running") running += 1;
+    if (paper.status === "queued") queued += 1;
+  }
+  return {
+    papers_total: papers.length,
+    papers_done: done,
+    papers_with_findings: findings,
+    papers_running: running,
+    papers_queued: queued,
+  };
+}
+
+export function conferenceProgressLine(progress?: ConferenceProgress, papers: Paper[] = []): string {
+  const counts = progress ?? conferenceProgressFromPapers(papers);
+  return `${counts.papers_done} complete · ${counts.papers_with_findings} with findings · ${counts.papers_running} running`;
+}
+
+export function conferenceQueueActive(papers: Paper[], progress?: ConferenceProgress): boolean {
+  if ((progress?.papers_running ?? 0) + (progress?.papers_queued ?? 0) > 0) return true;
+  return papers.some((paper) => paper.status === "queued" || paper.status === "running");
+}
+
+function keepExample(next: Paper[], current: Paper[]): Paper[] {
+  const sample = current.find((paper) => paper.job_id === EXAMPLE_JOB_ID);
+  if (!sample || next.some((paper) => paper.job_id === EXAMPLE_JOB_ID)) return next;
+  return [sample, ...next];
+}
+
+export function useConferenceDesk(
+  conferenceId: string,
+  initialPapers: Paper[],
+  initialProgress?: ConferenceProgress,
+  example = false,
+) {
+  const [papers, setPapers] = useState(initialPapers);
+  const [progress, setProgress] = useState(initialProgress);
+  const moving = conferenceQueueActive(papers, progress);
+
+  useEffect(() => {
+    setPapers(initialPapers);
+    setProgress(initialProgress);
+  }, [initialPapers, initialProgress]);
+
+  useEffect(() => {
+    if (!moving) return;
+    let cancelled = false;
+    const timer = setInterval(async () => {
+      const response = await fetch(`/api/desk/conferences/${conferenceId}`);
+      if (!response.ok || cancelled) return;
+      const body = (await response.json()) as ConferenceDesk;
+      if (!Array.isArray(body.papers) || cancelled) return;
+      setPapers((current) => (example ? keepExample(body.papers, current) : body.papers));
+      setProgress((current) => body.progress ?? current);
+    }, POLL_MS);
+    return () => {
+      cancelled = true;
+      clearInterval(timer);
+    };
+  }, [conferenceId, moving, example]);
+
+  return { papers, progress };
+}
 
 function titleOf(paper: Paper): string {
   return paper.title || paper.arxiv_id;
@@ -43,47 +131,28 @@ function liveLine(paper: Paper): string {
   return "";
 }
 
-function keepExample(next: Paper[], current: Paper[]): Paper[] {
-  const sample = current.find((paper) => paper.job_id === EXAMPLE_JOB_ID);
-  if (!sample || next.some((paper) => paper.job_id === EXAMPLE_JOB_ID)) return next;
-  return [sample, ...next];
-}
-
 export function DeskViews({
   conferenceId,
   conferenceName,
   initial,
+  initialProgress,
   example = false,
   initialView = "chat",
 }: {
   conferenceId: string;
   conferenceName: string;
   initial: Paper[];
+  initialProgress?: ConferenceProgress;
   example?: boolean;
   initialView?: "chat" | "summary";
 }) {
   const [view, setView] = useState<"chat" | "summary">(example || initialView === "summary" ? "summary" : "chat");
-  const [papers, setPapers] = useState(initial);
-  const moving = papers.some((paper) => paper.status === "queued" || paper.status === "running");
-
-  useEffect(() => {
-    setPapers(initial);
-  }, [initial]);
-
-  useEffect(() => {
-    if (!moving) return;
-    const timer = setInterval(async () => {
-      const response = await fetch(`/api/desk/conferences/${conferenceId}`);
-      if (!response.ok) return;
-      const body = (await response.json()) as ConferenceDesk;
-      if (!Array.isArray(body.papers)) return;
-      setPapers((current) => (example ? keepExample(body.papers, current) : body.papers));
-    }, 800);
-    return () => clearInterval(timer);
-  }, [conferenceId, moving, example]);
+  const { papers, progress } = useConferenceDesk(conferenceId, initial, initialProgress, example);
+  const counts = conferenceProgressLine(progress, papers);
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
+      <p className="shrink-0 px-4 pt-3 text-[11px] text-[#6b645c]">{counts}</p>
       <div role="tablist" aria-label="Desk view" className="flex shrink-0 items-end gap-1 border-b border-[#e4dcd0] px-4">
         <TabButton id="chat" selected={view === "chat"} onSelect={() => setView("chat")}>
           Chat
@@ -108,9 +177,92 @@ export function DeskViews({
         hidden={view !== "summary"}
         className={view === "summary" ? "flex min-h-0 flex-1 flex-col" : "hidden"}
       >
-        <Summary conferenceId={conferenceId} papers={papers} />
+        <Summary conferenceId={conferenceId} papers={papers} counts={counts} />
       </div>
     </div>
+  );
+}
+
+function dot(status: string): string {
+  if (status === "contradicted" || status === "error") return "bg-[#8c3a2f]";
+  if (status === "passed") return "bg-[#2f6b4f]";
+  if (status === "running") return "bg-[#c4a15a]";
+  return "bg-[#cfc6b8]";
+}
+
+export function ConferenceCount({
+  conferenceId,
+  initialPapers,
+  initialProgress,
+  example = false,
+}: {
+  conferenceId: string;
+  initialPapers: Paper[];
+  initialProgress?: ConferenceProgress;
+  example?: boolean;
+}) {
+  const { papers, progress } = useConferenceDesk(conferenceId, initialPapers, initialProgress, example);
+  return <p className="mt-1 text-[11px] text-[#6b645c]">{conferenceProgressLine(progress, papers)}</p>;
+}
+
+export function PaperRows({
+  conferenceId,
+  initialPapers,
+  initialProgress,
+  activeJobId,
+  example = false,
+  remove,
+}: {
+  conferenceId: string;
+  initialPapers: Paper[];
+  initialProgress?: ConferenceProgress;
+  activeJobId?: string;
+  example?: boolean;
+  remove: (formData: FormData) => void | Promise<void>;
+}) {
+  const { papers } = useConferenceDesk(conferenceId, initialPapers, initialProgress, example);
+
+  return (
+    <ul className="relative z-0 flex min-h-0 flex-1 flex-col gap-1 overflow-y-auto">
+      {papers.map((paper) => {
+        const active = paper.job_id === activeJobId;
+        const title = paper.title || "Unread paper";
+        return (
+          <li key={paper.job_id} className="flex shrink-0 items-start gap-1 lg:shrink">
+            <MorphLink
+              href={`/desk/${conferenceId}/${paper.job_id}${paper.job_id === EXAMPLE_JOB_ID ? "?example=1" : ""}`}
+              className={`flex min-w-0 flex-1 items-start gap-2 rounded-xl px-2 py-2 ${active ? "bg-white/80" : "hover:bg-white/60"}`}
+            >
+              <span
+                className={`mt-1.5 size-1.5 shrink-0 rounded-full ${dot(paper.status)} ${paper.status === "running" ? "desk-pulse" : ""}`}
+              />
+              <span className="min-w-0">
+                <span className="block text-sm leading-5">{title}</span>
+                <span className="text-[11px] text-[#6b645c]">
+                  {paper.arxiv_id}
+                  {paper.status === "passed" || paper.status === "contradicted" || paper.status === "error" ? (
+                    <>
+                      {" · "}
+                      <span className={verdictTone(paper.status)}>{paperLabel(paper)}</span>
+                    </>
+                  ) : null}
+                </span>
+              </span>
+            </MorphLink>
+            <form action={remove} className="shrink-0 pt-1">
+              <input type="hidden" name="job_id" value={paper.job_id} />
+              <input type="hidden" name="open" value={active ? "1" : ""} />
+              <button
+                type="submit"
+                className="px-1 py-1 text-[11px] text-[#6b645c] underline decoration-[#c4a15a] underline-offset-4"
+              >
+                Delete
+              </button>
+            </form>
+          </li>
+        );
+      })}
+    </ul>
   );
 }
 
@@ -141,9 +293,18 @@ function TabButton({
   );
 }
 
-function Summary({ conferenceId, papers }: { conferenceId: string; papers: Paper[] }) {
+function Summary({
+  conferenceId,
+  papers,
+  counts,
+}: {
+  conferenceId: string;
+  papers: Paper[];
+  counts: string;
+}) {
   return (
     <section aria-label="Paper summary" className="min-h-0 flex-1 overflow-y-auto px-4 py-6 lg:px-8">
+      <p className="mx-auto mb-4 max-w-3xl text-[11px] text-[#6b645c]">{counts}</p>
       {papers.length === 0 ? (
         <p className="text-sm text-[#6b645c]">No papers on this list yet.</p>
       ) : (

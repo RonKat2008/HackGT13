@@ -1,18 +1,10 @@
 import Link from "next/link";
-import { EXAMPLE_JOB_ID, type ConferenceSummary, type Paper } from "@/lib/desk";
-import { paperLabel, verdictTone } from "@/lib/verdict";
+import { type ConferenceProgress, type ConferenceSummary, type Paper } from "@/lib/desk";
 import { AccountMenu } from "./account";
 import { AddPapersForm } from "./add-form";
 import { addPapers, deleteConference, deletePaper, runQueue, uploadPdf } from "./actions";
 import { DeleteConferenceButton } from "./delete-conference";
-import { MorphLink } from "./morph-link";
-
-function dot(status: string): string {
-  if (status === "contradicted" || status === "error") return "bg-[#8c3a2f]";
-  if (status === "passed") return "bg-[#2f6b4f]";
-  if (status === "running") return "bg-[#c4a15a]";
-  return "bg-[#cfc6b8]";
-}
+import { ConferenceCount, PaperRows } from "./progress";
 
 export function ConferenceRail({
   conferences,
@@ -60,6 +52,8 @@ export function PaperRail({
   running,
   activeJobId,
   email,
+  progress,
+  example = false,
 }: {
   conferenceId: string;
   name: string;
@@ -67,6 +61,8 @@ export function PaperRail({
   running: boolean;
   activeJobId?: string;
   email: string;
+  progress?: ConferenceProgress;
+  example?: boolean;
 }) {
   const add = addPapers.bind(null, conferenceId);
   const upload = uploadPdf.bind(null, conferenceId);
@@ -80,7 +76,12 @@ export function PaperRail({
           ArxAudit
         </Link>
         <p className="mt-4 font-[family-name:var(--desk-serif)] text-lg leading-tight">{name}</p>
-        <p className="mt-1 text-[11px] text-[#6b645c]">{papers.length} papers</p>
+        <ConferenceCount
+          conferenceId={conferenceId}
+          initialPapers={papers}
+          initialProgress={progress}
+          example={example}
+        />
         {running ? null : (
           <div className="mt-2">
             <DeleteConferenceButton conferenceId={conferenceId} action={deleteConference} />
@@ -111,46 +112,14 @@ export function PaperRail({
           Download zip
         </a>
       </div>
-      <ul className="relative z-0 flex min-h-0 flex-1 flex-col gap-1 overflow-y-auto">
-        {papers.map((paper) => {
-          const active = paper.job_id === activeJobId;
-          const title = paper.title || "Unread paper";
-          return (
-            <li key={paper.job_id} className="flex shrink-0 items-start gap-1 lg:shrink">
-              <MorphLink
-                href={`/desk/${conferenceId}/${paper.job_id}${paper.job_id === EXAMPLE_JOB_ID ? "?example=1" : ""}`}
-                className={`flex min-w-0 flex-1 items-start gap-2 rounded-xl px-2 py-2 ${active ? "bg-white/80" : "hover:bg-white/60"}`}
-              >
-                <span
-                  className={`mt-1.5 size-1.5 shrink-0 rounded-full ${dot(paper.status)} ${paper.status === "running" ? "desk-pulse" : ""}`}
-                />
-                <span className="min-w-0">
-                  <span className="block text-sm leading-5">{title}</span>
-                  <span className="text-[11px] text-[#6b645c]">
-                    {paper.arxiv_id}
-                    {paper.status === "passed" || paper.status === "contradicted" || paper.status === "error" ? (
-                      <>
-                        {" · "}
-                        <span className={verdictTone(paper.status)}>{paperLabel(paper)}</span>
-                      </>
-                    ) : null}
-                  </span>
-                </span>
-              </MorphLink>
-              <form action={remove} className="shrink-0 pt-1">
-                <input type="hidden" name="job_id" value={paper.job_id} />
-                <input type="hidden" name="open" value={active ? "1" : ""} />
-                <button
-                  type="submit"
-                  className="px-1 py-1 text-[11px] text-[#6b645c] underline decoration-[#c4a15a] underline-offset-4"
-                >
-                  Delete
-                </button>
-              </form>
-            </li>
-          );
-        })}
-      </ul>
+      <PaperRows
+        conferenceId={conferenceId}
+        initialPapers={papers}
+        initialProgress={progress}
+        activeJobId={activeJobId}
+        example={example}
+        remove={remove}
+      />
       <AccountMenu email={email} />
     </aside>
   );
