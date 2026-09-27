@@ -7,7 +7,6 @@ import {
   claimVerdictNote,
   claimVerdictTone,
   depthLabel,
-  isFinding,
   percent,
 } from "@/lib/verdict";
 import { Provenance } from "./provenance";
@@ -42,6 +41,33 @@ export function catalogWord(status: string): string {
   return "No match";
 }
 
+export function reviewKind(claim: Claim): string {
+  if (claim.claim_type === "numerical") return "Number";
+  if (claim.claim_type === "numerical_comparison") return "Table";
+  if (claim.claim_type === "dataset") return "Count";
+  if (claim.claim_type === "citation") return "Citation";
+  return "Sentence";
+}
+
+export function reviewResult(claim: Claim): string {
+  const reason = claim.reason.replace(/\s+/g, " ").trim().replace(/\.$/, "");
+  const verdict = claimVerdictLabel(claim.verdict);
+  const terseCount = /^computed\s+\S+,?\s+claimed\s+\S+$/i.test(reason);
+  if (reason && reason.toLowerCase() !== verdict.toLowerCase() && !terseCount) {
+    return `${reason}.`;
+  }
+  if (claim.computation?.actual != null && claim.computation.expected != null) {
+    return `Counted ${claim.computation.actual}. The paper says ${claim.computation.expected}.`;
+  }
+  if (claim.verdict === "reproduced") return "This matches the public table.";
+  if (claim.verdict === "supported") return "Nothing in the paper disagrees with this.";
+  if (claim.verdict === "insufficient_evidence") return "A person still has to decide.";
+  if (claim.verdict === "could_not_reproduce") return "The public table does not match this count.";
+  if (claim.verdict === "contradicted") return "This does not match the rest of the paper.";
+  if (claim.verdict === "not_checked") return "This was not checked.";
+  return verdict;
+}
+
 function specLine(computation: Computation): string {
   const spec = computation.spec ?? {};
   const operation = String(spec.operation ?? spec.op ?? "");
@@ -60,102 +86,96 @@ export function FindingCard({
   claim: Claim;
   onViewEvidence?: (page: number | null, text?: string) => void;
 }) {
-  const evidence = claim.evidence.find((item) => item.role === "contradicts") ?? claim.evidence[0];
-  const note = claimVerdictNote(claim.verdict);
+  const against =
+    claim.evidence.find((item) => item.role === "contradicts" && item.text.trim()) ??
+    claim.evidence.find((item) => item.text.trim() && item.text !== claim.text && !item.text.startsWith("Neighbor window"));
   const page = evidencePage(claim);
-  const [chain, setChain] = useState(false);
+  const [checked, setChecked] = useState(false);
+  const note = claimVerdictNote(claim.verdict);
+  const counted =
+    claim.computation && claim.computation.actual != null
+      ? `Counted ${claim.computation.actual}${claim.computation.formula ? `. ${claim.computation.formula}` : ""}`
+      : "";
 
   return (
-    <article className="rounded-2xl bg-white px-3 py-3 ring-1 ring-[#e4dcd0]">
-      <p className="text-[11px] tracking-[0.12em] text-[#6b645c]">Claim{claim.page ? ` — Page ${claim.page}` : ""}</p>
-      <blockquote className="mt-1 font-[family-name:var(--desk-serif)] text-sm leading-6">{claim.text}</blockquote>
-      {evidence?.text ? (
+    <article className="rounded-2xl bg-white px-3 py-3 ring-1 ring-[#c4a15a]">
+      <p className="text-xs text-[#6b645c]">
+        {reviewKind(claim)}
+        {claim.page ? ` · page ${claim.page}` : ""}
+      </p>
+      <p className="mt-2 text-xs text-[#6b645c]">The paper says</p>
+      <blockquote className="mt-1 font-[family-name:var(--desk-serif)] text-sm leading-6 text-[#1c1915]">
+        {claim.text}
+      </blockquote>
+      {against?.text ? (
         <>
-          <p className="mt-3 text-[11px] tracking-[0.12em] text-[#6b645c]">
-            Evidence{evidence.page ? ` — Page ${evidence.page}` : ""}
+          <p className="mt-3 text-xs text-[#6b645c]">
+            {against.page ? `Elsewhere in the paper, page ${against.page}` : "Elsewhere in the paper"}
           </p>
-          <blockquote className="mt-1 text-sm leading-6 text-[#1c1915]">{evidence.text}</blockquote>
+          <blockquote className="mt-1 text-sm leading-6 text-[#1c1915]">{against.text}</blockquote>
         </>
       ) : null}
-      <p className={`mt-3 text-sm font-semibold ${claimVerdictTone(claim)}`}>
-        {claimVerdictLabel(claim.verdict)}
-        {note ? ` · ${note}` : ""}
-      </p>
-      <p className="mt-1 text-xs text-[#6b645c]">
-        {percent(claim.confidence)} · {depthLabel(claim.depth)}
-      </p>
+      {counted ? <p className="mt-3 text-sm leading-6 text-[#1c1915]">{counted}</p> : null}
+      <p className={`mt-3 text-sm leading-6 ${claimVerdictTone(claim)}`}>{reviewResult(claim)}</p>
+      {note ? <p className="mt-1 text-xs text-[#8a6a2f]">{note}</p> : null}
+      {onViewEvidence ? (
+        <button
+          type="button"
+          className="mt-3 text-sm text-[#1c1915] underline decoration-[#c4a15a] underline-offset-4"
+          onClick={() => onViewEvidence(against?.page ?? page, against?.text || claim.text)}
+        >
+          Show in the PDF
+        </button>
+      ) : null}
       <button
         type="button"
-        aria-expanded={chain}
-        onClick={() => setChain((open) => !open)}
-        className="mt-3 text-[11px] tracking-[0.12em] text-[#6b645c]"
+        aria-expanded={checked}
+        onClick={() => setChecked((open) => !open)}
+        className="mt-3 block text-xs text-[#6b645c]"
       >
-        Chain
+        {checked ? "Hide how this was checked" : "How this was checked"}
       </button>
-      {chain ? <Provenance claim={claim} /> : null}
-      {claim.steps.length > 0 ? (
-        <ul className="mt-3 flex flex-col gap-1 text-xs leading-5 text-[#1c1915]">
-          {claim.steps.map((step, index) => {
-            const actor = judgeActor(step);
-            return (
-              <li key={`${index}-${step}`} className="flex items-baseline gap-2">
-                {actor ? (
-                  <span className="shrink-0 text-[11px] tracking-[0.12em] text-[#8a6a2f]">{actor}</span>
-                ) : null}
-                <span>{stepBody(step, actor)}</span>
-              </li>
-            );
-          })}
-        </ul>
-      ) : null}
-      {claim.catalog && claim.catalog.queried.length > 0 ? (
-        <ul className="mt-3 flex flex-col gap-1 text-xs">
-          {claim.catalog.queried.map((row) => (
-            <li key={row.catalog} className="flex justify-between gap-3">
-              <span>{CATALOG_NAME[row.catalog] ?? row.catalog}</span>
-              <span className="text-[#6b645c]">{catalogWord(row.status)}</span>
-            </li>
-          ))}
-        </ul>
-      ) : null}
-      {claim.computation ? (
-        <dl className="mt-3 grid grid-cols-2 gap-x-3 gap-y-1 text-xs">
-          <dt className="text-[#6b645c]">Spec</dt>
-          <dd>{specLine(claim.computation)}</dd>
-          <dt className="text-[#6b645c]">Expected</dt>
-          <dd>{claim.computation.expected ?? "—"}</dd>
-          <dt className="text-[#6b645c]">Actual</dt>
-          <dd>{claim.computation.actual ?? "—"}</dd>
-          <dt className="text-[#6b645c]">Formula</dt>
-          <dd>{claim.computation.formula || "—"}</dd>
-        </dl>
-      ) : null}
-      {onViewEvidence ? (
-        <div className="mt-3 flex flex-wrap gap-1.5">
-          {claim.evidence
-            .filter((item) => item.text.trim() && !item.text.startsWith("Neighbor window"))
-            .slice(0, 4)
-            .map((item, index) => (
-              <button
-                key={`${item.role}-${item.page ?? 0}-${index}`}
-                type="button"
-                className="rounded-full px-2 py-1 text-[11px] text-[#1c1915] ring-1 ring-[#e4dcd0]"
-                onClick={() => onViewEvidence(item.page, item.text)}
-              >
-                {item.role}
-                {item.page ? ` p.${item.page}` : ""}
-              </button>
-            ))}
-          <button
-            type="button"
-            className="text-xs underline decoration-[#c4a15a] underline-offset-4"
-            onClick={() => onViewEvidence(page, evidence?.text || claim.text)}
-          >
-            View evidence in PDF
-          </button>
+      {checked ? (
+        <div className="mt-3 border-t border-[#e4dcd0] pt-3">
+          <p className="text-xs text-[#6b645c]">
+            {claimVerdictLabel(claim.verdict)} · {percent(claim.confidence)} · {depthLabel(claim.depth)}
+          </p>
+          <Provenance claim={claim} />
+          {claim.steps.length > 0 ? (
+            <ul className="mt-3 flex flex-col gap-1 text-xs leading-5 text-[#1c1915]">
+              {claim.steps.map((step, index) => {
+                const actor = judgeActor(step);
+                return (
+                  <li key={`${index}-${step}`} className="flex items-baseline gap-2">
+                    {actor ? <span className="shrink-0 text-[#8a6a2f]">{actor}</span> : null}
+                    <span>{stepBody(step, actor)}</span>
+                  </li>
+                );
+              })}
+            </ul>
+          ) : null}
+          {claim.catalog && claim.catalog.queried.length > 0 ? (
+            <ul className="mt-3 flex flex-col gap-1 text-xs">
+              {claim.catalog.queried.map((row) => (
+                <li key={row.catalog} className="flex justify-between gap-3">
+                  <span>{CATALOG_NAME[row.catalog] ?? row.catalog}</span>
+                  <span className="text-[#6b645c]">{catalogWord(row.status)}</span>
+                </li>
+              ))}
+            </ul>
+          ) : null}
+          {claim.computation ? (
+            <dl className="mt-3 grid grid-cols-2 gap-x-3 gap-y-1 text-xs">
+              <dt className="text-[#6b645c]">Check</dt>
+              <dd>{specLine(claim.computation) || "—"}</dd>
+              <dt className="text-[#6b645c]">Paper</dt>
+              <dd>{claim.computation.expected ?? "—"}</dd>
+              <dt className="text-[#6b645c]">Counted</dt>
+              <dd>{claim.computation.actual ?? "—"}</dd>
+            </dl>
+          ) : null}
         </div>
       ) : null}
-      {isFinding(claim) && claim.reason ? <p className="mt-2 text-xs leading-5 text-[#6b645c]">{claim.reason}</p> : null}
     </article>
   );
 }

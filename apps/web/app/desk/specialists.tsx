@@ -2,8 +2,8 @@
 
 import { useEffect, useState } from "react";
 import type { Claim, Issue, Paper } from "@/lib/desk";
-import { claimVerdictLabel, isFinding } from "@/lib/verdict";
-import { FindingCard } from "./finding";
+import { isFinding } from "@/lib/verdict";
+import { FindingCard, reviewKind, reviewResult } from "./finding";
 
 export const ORDER = [
   "parse",
@@ -136,13 +136,54 @@ export function Specialists({
 
   const failed = [...paper.events].reverse().find((event) => event.state === "failed");
 
+  const hasClaims = (paper.claims ?? []).length > 0;
+  const [traceOpen, setTraceOpen] = useState(!hasClaims);
+
   return (
-    <aside className="flex h-full min-h-0 w-full flex-col overflow-y-auto border-[#e4dcd0] bg-[#f7f3ea] px-4 py-4 lg:w-72 lg:border-l">
-      <p className="text-[11px] tracking-[0.16em] text-[#6b645c]">SPECIALISTS</p>
+    <aside className="flex h-full min-h-0 w-full flex-col overflow-y-auto border-[#e4dcd0] bg-[#f7f3ea] px-4 py-4 lg:w-96 lg:border-l">
       <p className="sr-only" aria-live="polite">
         {announcement}
       </p>
-      <ol className="mt-4 flex flex-col gap-3">
+      {hasClaims && onSelectClaim ? (
+        <ClaimList
+          paper={paper}
+          selectedClaimId={selectedClaimId}
+          onSelectClaim={onSelectClaim}
+          onViewEvidence={onViewEvidence}
+        />
+      ) : null}
+      {paper.status === "passed" && paper.issues.length === 0 && !hasClaims ? (
+        <p className="text-sm leading-6 text-[#1c1915]">Nothing on this paper needs a second look.</p>
+      ) : null}
+      {paper.status === "error" ? (
+        <p className="text-sm leading-6 text-[#8c3a2f]">
+          {failed?.detail || "This paper could not be read."}
+        </p>
+      ) : null}
+      {!hasClaims && paper.issues.length > 0 ? (
+        <ul className="flex flex-col gap-2">
+          {paper.issues.map((issue, index) => (
+            <li key={`${issue.issue_type}-${index}`}>
+              <button
+                type="button"
+                onClick={() => onSelect(index)}
+                className={`w-full rounded-2xl px-3 py-3 text-left ring-1 ${
+                  index === selected ? "bg-white ring-[#c4a15a]" : "bg-transparent ring-[#e4dcd0]"
+                }`}
+              >
+                <span className="mt-1 block text-sm leading-5 text-[#1c1915]">{issue.reason}</span>
+              </button>
+            </li>
+          ))}
+        </ul>
+      ) : null}
+      <details
+        className={hasClaims ? "mt-6 border-t border-[#e4dcd0] pt-4" : ""}
+        open={traceOpen}
+        onToggle={(event) => setTraceOpen(event.currentTarget.open)}
+      >
+        <summary className="cursor-pointer text-sm text-[#1c1915]">How this was read</summary>
+        <ol className="mt-4 flex flex-col gap-3">
         {[...ORDER]
           .sort((a, b) => {
             const rank = { fail: 0, open: 1, pass: 2 };
@@ -173,45 +214,8 @@ export function Specialists({
               </li>
             );
           })}
-      </ol>
-      <div className="mt-6 border-t border-[#e4dcd0] pt-4">
-        {paper.status === "passed" && paper.issues.length === 0 ? (
-          <p className="text-sm leading-6 text-[#1c1915]">
-            No citation gap, missing number, unsupported claim, or failed rerun.
-          </p>
-        ) : null}
-        {paper.status === "error" ? (
-          <p className="text-sm leading-6 text-[#8c3a2f]">
-            {failed?.detail || "This paper could not be read."}
-          </p>
-        ) : null}
-        {(paper.claims ?? []).length > 0 && onSelectClaim ? (
-          <ClaimList
-            paper={paper}
-            selectedClaimId={selectedClaimId}
-            onSelectClaim={onSelectClaim}
-            onViewEvidence={onViewEvidence}
-          />
-        ) : null}
-        {(paper.claims ?? []).length === 0 && paper.issues.length > 0 ? (
-          <ul className="flex flex-col gap-2">
-            {paper.issues.map((issue, index) => (
-              <li key={`${issue.issue_type}-${index}`}>
-                <button
-                  type="button"
-                  onClick={() => onSelect(index)}
-                  className={`w-full rounded-2xl px-3 py-3 text-left ring-1 ${
-                    index === selected ? "bg-white ring-[#c4a15a]" : "bg-transparent ring-[#e4dcd0]"
-                  }`}
-                >
-                  <span className="text-[11px] tracking-[0.12em] text-[#8a6a2f]">{issue.issue_type}</span>
-                  <span className="mt-1 block text-sm leading-5 text-[#1c1915]">{issue.reason}</span>
-                </button>
-              </li>
-            ))}
-          </ul>
-        ) : null}
-      </div>
+        </ol>
+      </details>
     </aside>
   );
 }
@@ -228,29 +232,55 @@ function ClaimList({
   onViewEvidence?: (page: number | null, text?: string) => void;
 }) {
   const claims = orderedClaims(paper);
-  const findings = claims.filter((claim) => isFinding(claim));
-  const supported = claims.filter(
-    (claim) => !isFinding(claim) && (claim.verdict === "supported" || claim.verdict === "reproduced"),
+  const taken = new Set<string>();
+  function take(match: (claim: Claim) => boolean): Claim[] {
+    const group = claims.filter((claim) => !taken.has(claim.claim_id) && match(claim));
+    for (const claim of group) taken.add(claim.claim_id);
+    return group;
+  }
+  const toCheck = take(
+    (claim) =>
+      claim.verdict === "contradicted" ||
+      claim.verdict === "could_not_reproduce" ||
+      claim.verdict === "unresolved",
   );
-  const rest = claims.filter((claim) => !findings.includes(claim) && !supported.includes(claim));
+  const needsPerson = take(
+    (claim) => claim.verdict === "insufficient_evidence" || isFinding(claim),
+  );
+  const holds = take((claim) => claim.verdict === "supported" || claim.verdict === "reproduced");
+  const rest = take(() => true);
   return (
-    <div className="flex flex-col gap-4">
+    <div className="flex flex-col gap-5">
       <ClaimGroup
-        label="Findings"
-        claims={findings}
+        label="To check"
+        hint="Open these before you trust the paper."
+        tone="text-[#8c3a2f]"
+        claims={toCheck}
         selectedClaimId={selectedClaimId}
         onSelectClaim={onSelectClaim}
         onViewEvidence={onViewEvidence}
       />
       <ClaimGroup
-        label="Supported"
-        claims={supported}
+        label="Needs a person"
+        hint="The read did not settle these."
+        tone="text-[#8a6a2f]"
+        claims={needsPerson}
         selectedClaimId={selectedClaimId}
         onSelectClaim={onSelectClaim}
         onViewEvidence={onViewEvidence}
       />
       <ClaimGroup
-        label="Not a finding"
+        label="Holds"
+        tone="text-[#2f6b4f]"
+        claims={holds}
+        collapsed
+        selectedClaimId={selectedClaimId}
+        onSelectClaim={onSelectClaim}
+        onViewEvidence={onViewEvidence}
+      />
+      <ClaimGroup
+        label="Not checked"
+        tone="text-[#6b645c]"
         claims={rest}
         collapsed
         selectedClaimId={selectedClaimId}
@@ -263,6 +293,8 @@ function ClaimList({
 
 function ClaimGroup({
   label,
+  hint,
+  tone,
   claims,
   collapsed = false,
   selectedClaimId,
@@ -270,6 +302,8 @@ function ClaimGroup({
   onViewEvidence,
 }: {
   label: string;
+  hint?: string;
+  tone: string;
   claims: Claim[];
   collapsed?: boolean;
   selectedClaimId: string;
@@ -283,44 +317,55 @@ function ClaimGroup({
   }, [selectedHere]);
   if (claims.length === 0) return null;
   return (
-    <div>
+    <section>
       {collapsed ? (
         <button
           type="button"
           aria-expanded={open}
           onClick={() => setOpen((current) => !current)}
-          className="text-[11px] tracking-[0.12em] text-[#6b645c]"
+          className="text-sm text-[#1c1915]"
         >
           {label} · {claims.length}
         </button>
       ) : (
-        <p className="text-[11px] tracking-[0.12em] text-[#6b645c]">{label}</p>
+        <div>
+          <h2 className="text-sm text-[#1c1915]">
+            {label} · {claims.length}
+          </h2>
+          {hint ? <p className="mt-1 text-xs leading-5 text-[#6b645c]">{hint}</p> : null}
+        </div>
       )}
       {open ? (
-      <ul className="mt-2 flex flex-col gap-2">
-        {claims.map((claim) => {
-          const active = claim.claim_id === selectedClaimId;
-          return (
-            <li key={claim.claim_id}>
-              {active ? (
-                <FindingCard claim={claim} onViewEvidence={onViewEvidence} />
-              ) : (
-                <button
-                  type="button"
-                  onClick={() => onSelectClaim(claim.claim_id)}
-                  aria-pressed={active}
-                  className="w-full rounded-2xl bg-transparent px-3 py-3 text-left ring-1 ring-[#e4dcd0]"
-                >
-                  <span className="text-[11px] tracking-[0.12em] text-[#8a6a2f]">{claimVerdictLabel(claim.verdict)}</span>
-                  <span className="mt-1 block text-sm leading-5 text-[#1c1915]">{claim.text}</span>
-                </button>
-              )}
-            </li>
-          );
-        })}
-      </ul>
+        <ul className="mt-2 flex flex-col gap-2">
+          {claims.map((claim) => {
+            const active = claim.claim_id === selectedClaimId;
+            return (
+              <li key={claim.claim_id}>
+                {active ? (
+                  <FindingCard claim={claim} onViewEvidence={onViewEvidence} />
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => onSelectClaim(claim.claim_id)}
+                    aria-pressed={active}
+                    className="w-full rounded-2xl bg-transparent px-3 py-3 text-left ring-1 ring-[#e4dcd0]"
+                  >
+                    <span className="text-xs text-[#6b645c]">
+                      {reviewKind(claim)}
+                      {claim.page ? ` · page ${claim.page}` : ""}
+                    </span>
+                    <span className="mt-1 block font-[family-name:var(--desk-serif)] text-sm leading-5 text-[#1c1915]">
+                      {claim.text}
+                    </span>
+                    <span className={`mt-2 block text-sm leading-5 ${tone}`}>{reviewResult(claim)}</span>
+                  </button>
+                )}
+              </li>
+            );
+          })}
+        </ul>
       ) : null}
-    </div>
+    </section>
   );
 }
 

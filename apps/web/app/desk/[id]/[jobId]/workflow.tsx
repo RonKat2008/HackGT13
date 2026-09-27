@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import type { Claim, Paper, Quote } from "@/lib/desk";
-import { categoryLines, findingCount, legendLine, paperLabel, summaryLine, summaryOf, verdictTone } from "@/lib/verdict";
+import { findingCount, paperLabel, summaryLine, summaryOf, verdictTone } from "@/lib/verdict";
 import { deletePaper } from "../../actions";
 import { AskDesk } from "../ask";
 import { MorphLink } from "../../morph-link";
@@ -347,31 +347,21 @@ export function Workflow({
 
 function SummaryHeader({ paper }: { paper: Paper }) {
   const summary = summaryOf(paper);
-  const line = summaryLine(summary);
-  const legend = legendLine(summary);
-  if (!line) {
+  if (!summaryLine(summary)) {
     if (paper.status === "queued" || paper.status === "error") {
       return <p className="mt-3 text-sm text-[#6b645c]">Not read</p>;
     }
     return null;
   }
-  const categories = categoryLines(summary).filter((item) => item.total > 0);
-  return (
-    <div className="mt-3 max-w-3xl">
-      <p className="text-sm leading-6 text-[#1c1915]">{line}</p>
-      {legend ? <p className="mt-1 text-xs leading-5 text-[#6b645c]">{legend}</p> : null}
-      {categories.length > 0 ? (
-        <dl className="mt-2 flex flex-wrap gap-x-6 gap-y-1 text-xs text-[#6b645c]">
-          {categories.map((item) => (
-            <div key={item.label} className="flex items-baseline gap-1.5">
-              <dt>{item.label}</dt>
-              <dd className="text-[#1c1915]">{item.value}</dd>
-            </div>
-          ))}
-        </dl>
-      ) : null}
-    </div>
-  );
+  const toCheck = summary.contradicted + summary.not_reproduced + summary.unresolved;
+  const person = summary.insufficient;
+  const parts: string[] = [];
+  if (toCheck === 1) parts.push("1 thing to check");
+  if (toCheck > 1) parts.push(`${toCheck} things to check`);
+  if (person === 1) parts.push("1 still needs a person");
+  if (person > 1) parts.push(`${person} still need a person`);
+  const line = parts.length > 0 ? `${parts.join(". ")}.` : "Nothing to check on this paper.";
+  return <p className="mt-3 max-w-xl text-sm leading-6 text-[#1c1915]">{line}</p>;
 }
 
 function partNote(paper: Paper, part: string): string {
