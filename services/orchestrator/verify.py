@@ -282,16 +282,80 @@ def judge_with_lya(
         for claim in claims
         if str(claim.get("claim_type") or "") in JUDGED_TYPES and not deterministic_final(claim)
     ]
-    for claim in pending[:DEFAULT_CAP]:
-        _lya_then_jev(claim, context, openrouter, lya)
+    capped = pending[:DEFAULT_CAP]
+    pairs = [
+        (str(claim.get("text") or ""), list(claim.get("evidence") or []))
+        for claim in capped
+    ]
+    answers = lya.judge_claims(pairs)
+    escalations: list[tuple[dict[str, Any], dict[str, Any]]] = []
+    for claim, answer in zip(capped, answers):
+        if not answer.get("not_run") and lya.accepts(answer):
+            _append_step(claim, "Lya verdict")
+            _store(
+                claim,
+                str(answer.get("verdict") or "not_mentioned"),
+                _confidence(answer.get("confidence")),
+            )
+            continue
+        escalations.append((claim, answer))
+    escalations.sort(key=lambda item: _jev_escalation_priority(item[0]))
+    for claim, answer in escalations:
+        _jev_after_lya(claim, answer, context, openrouter, lya)
 
 
-def _lya_then_jev(claim: dict[str, Any], context: dict[str, Any], openrouter: str, lya: Any) -> None:
+def _jev_escalation_priority(claim: dict[str, Any]) -> int:
+    if _contradicted_looking(claim):
+        return 0
+    if _unresolved_citation_looking(claim):
+        return 1
+    return 2
+
+
+def _contradicted_looking(claim: dict[str, Any]) -> bool:
+    if deterministic_final(claim):
+        return False
+    evidence = list(claim.get("evidence") or [])
+    if any(isinstance(item, dict) and item.get("role") == "contradicts" for item in evidence):
+        return True
+    reason = str(claim.get("reason") or "").lower()
+    if "abstract" in reason and "number" in reason:
+        return True
+    if "number" in reason and "absent" in reason:
+        return True
+    return False
+
+
+def _unresolved_citation_looking(claim: dict[str, Any]) -> bool:
+    if _contradicted_looking(claim):
+        return False
+    if str(claim.get("verdict") or "") == "unresolved":
+        return True
+    catalog = claim.get("catalog")
+    if isinstance(catalog, dict):
+        queried = list(catalog.get("queried") or [])
+        if queried and all(
+            isinstance(item, dict) and str(item.get("status") or "") == "no_match"
+            for item in queried
+        ):
+            return True
+    return False
+
+
+def _jev_after_lya(
+    claim: dict[str, Any],
+    answer: dict[str, Any],
+    context: dict[str, Any],
+    openrouter: str,
+    lya: Any,
+) -> None:
     if deterministic_final(claim):
         return
-    answer = lya.judge_claim(str(claim.get("text") or ""), list(claim.get("evidence") or []))
     if answer.get("not_run"):
-        if not os.environ.get("XAI_API_KEY", "").strip():
+        model = lya.model_id()
+        if not os.environ.get("XAI_API_KEY", "").strip() and not (
+            model == "local" or model.startswith("local:")
+        ):
             _append_step(claim, "Lya not configured")
     else:
         _append_step(claim, "Lya verdict")

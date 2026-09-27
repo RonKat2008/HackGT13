@@ -66,6 +66,215 @@ def claim_lines(paper: dict[str, Any]) -> str:
     return "\n".join(lines) or "- none"
 
 
+_NAV = (
+    "pull up",
+    "bring up",
+    "show me",
+    "switch to",
+    "go to",
+    "open up",
+    "open",
+    "show",
+    "pull",
+    "bring",
+)
+_FILLER = {"the", "a", "an", "me", "my", "please", "to", "up", "desk", "list"}
+_SKIP = _FILLER | {
+    "and",
+    "with",
+    "for",
+    "from",
+    "this",
+    "that",
+    "paper",
+    "papers",
+    "summary",
+    "chat",
+    "chatbot",
+    "about",
+    "into",
+    "using",
+    "their",
+    "have",
+    "been",
+    "when",
+    "what",
+    "your",
+    "just",
+}
+_CHAT_PHRASES = (
+    "with the chatbot",
+    "with chatbot",
+    "with the chat",
+    "with chat",
+    "and the chatbot",
+    "and chatbot",
+    "chat bot",
+    "chatbot",
+)
+
+
+def _norm(text: str) -> str:
+    return " ".join(re.sub(r"[^a-z0-9.@-]+", " ", text.lower()).split())
+
+
+def _strip_phrases(text: str, phrases: tuple[str, ...]) -> str:
+    padded = f" {text} "
+    for phrase in phrases:
+        padded = padded.replace(f" {phrase} ", " ")
+    return " ".join(padded.split())
+
+
+def _only(query: str, words: set[str]) -> bool:
+    meaningful = [token for token in query.split() if token not in _FILLER]
+    return bool(meaningful) and all(token in words for token in meaningful)
+
+
+def _tokens(title: str) -> list[str]:
+    return [word for word in _norm(title).split() if len(word) >= 4 and word not in _SKIP]
+
+
+def _find_paper(query: str, papers: list[dict[str, Any]]) -> tuple[dict[str, Any] | None, bool]:
+    asked = _norm(query)
+    ranked: list[tuple[int, str]] = []
+    for paper in papers:
+        job_id = str(paper.get("job_id") or "")
+        if not job_id:
+            continue
+        title = _norm(str(paper.get("title") or ""))
+        arxiv = _norm(str(paper.get("arxiv_id") or ""))
+        score = 0
+        if arxiv and arxiv in asked:
+            score = 100
+        elif title and title in asked:
+            score = 80
+        else:
+            tokens = _tokens(title)
+            hits = [token for token in tokens if re.search(rf"\b{re.escape(token)}\b", asked)]
+            if not hits:
+                continue
+            if len(hits) == len(tokens):
+                score = 70
+            elif len(tokens) == 1:
+                score = 60
+            elif len(hits) >= 2:
+                score = 50 + len(hits)
+            elif len(hits[0]) >= 5:
+                score = 40
+            else:
+                continue
+        ranked.append((score, job_id))
+    if not ranked:
+        return None, False
+    ranked.sort(key=lambda item: item[0], reverse=True)
+    best = ranked[0][0]
+    leaders = {job_id for score, job_id in ranked if score == best}
+    if len(leaders) > 1:
+        return None, True
+    found = next(paper for paper in papers if str(paper.get("job_id") or "") == next(iter(leaders)))
+    return found, False
+
+
+def _show(view: str) -> dict[str, Any]:
+    say = "Summary." if view == "summary" else "Chat."
+    return {"type": "show", "view": view, "say": say}
+
+
+def _open(paper: dict[str, Any], ask: bool) -> dict[str, Any]:
+    title = str(paper.get("title") or paper.get("arxiv_id") or "that paper")
+    say = f"Opening {title} with the chatbot." if ask else f"Opening {title}."
+    return {
+        "type": "open",
+        "job_id": str(paper.get("job_id") or ""),
+        "arxiv_id": str(paper.get("arxiv_id") or ""),
+        "title": title,
+        "ask": ask,
+        "say": say,
+    }
+
+
+def _error_line(asked: str) -> bool:
+    return re.search(r"\b(errors?|issues|findings)\b", asked) is not None
+
+
+def _chat_prompt(text: str) -> dict[str, Any]:
+    return {"type": "prompt", "view": "chat", "text": text}
+
+
+def screen_command(question: str, papers: list[dict[str, Any]]) -> dict[str, Any] | None:
+    """Map a spoken line to a screen. This does not change a stored verdict."""
+    asked = _norm(question)
+    if not asked:
+        return None
+    if any(phrase in asked for phrase in _REFUSE_VERDICT):
+        return {
+            "type": "refuse",
+            "say": "The desk does not change a verdict from voice. The stored read stays as it is.",
+        }
+    ask_chat = re.match(r"^(?:please )?ask(?: the chat| chat) (.+)$", asked)
+    if ask_chat and ask_chat.group(1).strip():
+        return _chat_prompt(ask_chat.group(1).strip()[:500])
+    if _error_line(asked):
+        paper, ambiguous = _find_paper(_strip_phrases(asked, _NAV), papers)
+        if paper is None and not ambiguous:
+            return _chat_prompt("What errors were found in the papers?")
+    if not re.search(r"\b(pull up|bring up|show me|switch to|go to|open up|open|show|pull|bring)\b", asked):
+        return None
+    query = _strip_phrases(asked, _NAV)
+    ask = any(phrase in asked for phrase in ("with chatbot", "with the chatbot", "with chat", "chatbot"))
+    query = _strip_phrases(query, _CHAT_PHRASES)
+    meaningful = [token for token in query.split() if token not in _FILLER]
+    if not meaningful:
+        if "summary" in asked:
+            return _show("summary")
+        if "chat" in asked:
+            return _show("chat")
+        return None
+    if _only(query, {"summary", "summaries"}):
+        return _show("summary")
+    if _only(query, {"chat", "chats", "chatbot", "bot"}):
+        return _show("chat")
+    paper, ambiguous = _find_paper(query, papers)
+    if ambiguous:
+        return {"type": "clarify", "say": "Which paper?"}
+    if paper:
+        return _open(paper, ask or "chat" in asked)
+    if re.search(r"\bsummar(y|ies)\b", query):
+        return _show("summary")
+    if re.search(r"\bchats?\b", query):
+        return _show("chat")
+    return None
+
+
+def client_secret() -> dict[str, Any] | None:
+    """Mint a short-lived realtime token. The API key never leaves the server."""
+    key = os.environ.get("XAI_API_KEY", "").strip()
+    if not key:
+        return None
+    try:
+        import httpx
+
+        response = httpx.post(
+            "https://api.x.ai/v1/realtime/client_secrets",
+            headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
+            json={"expires_after": {"seconds": 300}},
+            timeout=20,
+        )
+    except Exception:
+        return None
+    if response.status_code != 200:
+        return None
+    try:
+        body = response.json()
+    except Exception:
+        return None
+    value = str(body.get("value") or "").strip()
+    if not value:
+        return None
+    expires = body.get("expires_at")
+    return {"value": value, "expires_at": expires if isinstance(expires, int) else None}
+
+
 def desk_action(question: str, papers: list[dict[str, Any]]) -> dict[str, Any] | None:
     asked = " ".join(question.lower().split())
     if any(phrase in asked for phrase in _REFUSE_VERDICT):

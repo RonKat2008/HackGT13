@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import re
+import threading
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any, Callable
@@ -10,13 +11,14 @@ import fitz
 
 import claims as claim_extract
 import evidence as evidence_index
+import paper_cache
 import probe
 import references as reference_index
 import shelf
 import tables as table_check
 import verify as claim_verify
 
-from models import STAGES
+from models import STAGES, deterministic_final
 
 _POOL_WORKERS = 4
 _EVIDENCE_TYPES = frozenset({"semantic", "numerical", "numerical_comparison"})
@@ -57,6 +59,114 @@ HIDDEN_SENTENCE = "Probe below 0.60 AUC on the holdout. AI-likeness hidden."
 TEST_FAIL_STATUSES = {"mismatch", "missing_row"}
 
 Recorder = Callable[[str, str, str, str], None]
+
+
+def _persist_visible_claims(job_id: str, typed_claims: list[dict[str, Any]]) -> None:
+    visible: list[dict[str, Any]] = []
+    for claim in typed_claims:
+        verdict = str(claim.get("verdict") or "")
+        if deterministic_final(claim) or (verdict and verdict != "not_checked"):
+            visible.append(claim)
+    if not visible:
+        return
+    import desk
+
+    with desk._db() as conn:
+        desk._ensure_desk(conn)
+        desk._persist_claims(conn, job_id, visible)
+        conn.commit()
+
+
+_PARALLEL_SPECIALISTS = (
+    "evidence",
+    "citations",
+    "numbers",
+    "tables",
+    "dataset",
+    "reproduce",
+)
+_AFTER_SPECIALISTS = ("verify", "critic", "stamp")
+
+
+class _AuditState:
+    """Shared paper state for checks that start together after claims exist."""
+
+    def __init__(self) -> None:
+        self.lock = threading.Lock()
+        self.path: str | Path = ""
+        self.sections: dict[str, str] = {}
+        self.claims: list[dict[str, Any]] = []
+        self.typed_claims: list[dict[str, Any]] = []
+        self.issues: list[dict[str, Any]] = []
+
+    def add_issues(self, found: list[dict[str, Any]]) -> None:
+        if not found:
+            return
+        with self.lock:
+            self.issues.extend(found)
+
+
+def check_evidence(state: _AuditState) -> None:
+    try:
+        index = evidence_index.PaperIndex(state.path, state.sections)
+        targets = [
+            claim
+            for claim in state.typed_claims
+            if claim.get("claim_type") in _EVIDENCE_TYPES
+        ]
+
+        def one(claim: dict[str, Any]) -> None:
+            with state.lock:
+                _attach_evidence_claim(index, claim)
+
+        _map_claims(one, targets)
+    except Exception:
+        pass
+    state.add_issues(
+        _support_issues(
+            state.claims,
+            state.sections.get("methods", ""),
+            state.sections.get("results", ""),
+        )
+    )
+
+
+def check_citations(state: _AuditState) -> None:
+    refs = state.sections.get("references", "")
+    state.add_issues(_citation_issues(state.claims, refs))
+    targets = [
+        claim
+        for claim in state.typed_claims
+        if str(claim.get("claim_type") or "") == "citation"
+    ]
+
+    def one(claim: dict[str, Any]) -> None:
+        with state.lock:
+            reference_index.attach([claim], refs)
+
+    _map_claims(one, targets)
+
+
+def check_numbers(state: _AuditState) -> None:
+    results_text = str(state.sections.get("results") or "")
+    state.add_issues(_number_issues(state.sections.get("abstract", ""), results_text))
+    targets = [
+        claim
+        for claim in state.typed_claims
+        if str(claim.get("claim_type") or "") in _NUMERIC_TYPES
+        and claim.get("section") == "abstract"
+    ]
+
+    def one(claim: dict[str, Any]) -> None:
+        with state.lock:
+            _settle_abstract_number(claim, results_text, state.path)
+
+    _map_claims(one, targets)
+
+
+def check_tables(state: _AuditState) -> None:
+    with state.lock:
+        table_check.annotate(state.path, state.typed_claims)
 
 
 def load_paper(path: str | Path) -> str:
@@ -137,16 +247,29 @@ def audit_paper(
     hidden_sentence = ""
     kaggle: dict[str, Any] = {}
     pages = 0
+    state = _AuditState()
+    state.issues = issues
+    state.path = path
+    emit_lock = threading.Lock()
 
-    def emit(specialist: str, state: str, detail: str = "") -> None:
-        record(job_id, specialist, state, detail)
-        events.append({"specialist": specialist, "state": state, "detail": detail})
+    def emit(specialist: str, phase: str, detail: str = "") -> None:
+        with emit_lock:
+            record(job_id, specialist, phase, detail)
+            events.append({"specialist": specialist, "state": phase, "detail": detail})
+
+    def publish() -> None:
+        state.path = path
+        state.sections = sections
+        state.claims = claims
+        state.typed_claims = typed_claims
 
     def parse() -> None:
         nonlocal text, pages, sections
-        text = load_paper(path)
-        pages = _page_count(path)
-        sections = split_sections(text)
+        parsed = _parsed_paper(path)
+        text = str(parsed["text"])
+        pages = int(parsed["page_count"])
+        sections = parsed["sections"]
+        publish()
 
     def claims_step() -> None:
         nonlocal claims, typed_claims, claims_error
@@ -156,64 +279,22 @@ def audit_paper(
         except Exception as exc:
             typed_claims = []
             claims_error = f" Typed claim extract failed: {exc}"
+        publish()
 
     def evidence() -> None:
-        try:
-            index = evidence_index.PaperIndex(path, sections)
-            targets = [
-                claim
-                for claim in typed_claims
-                if claim.get("claim_type") in _EVIDENCE_TYPES
-            ]
-
-            def one(claim: dict[str, Any]) -> None:
-                _attach_evidence_claim(index, claim)
-
-            _map_claims(one, targets)
-        except Exception:
-            pass
-        issues.extend(
-            _support_issues(
-                claims,
-                sections.get("methods", ""),
-                sections.get("results", ""),
-            )
-        )
+        check_evidence(state)
 
     def citations() -> None:
-        refs = sections.get("references", "")
-        issues.extend(_citation_issues(claims, refs))
-        targets = [
-            claim
-            for claim in typed_claims
-            if str(claim.get("claim_type") or "") == "citation"
-        ]
-
-        def one(claim: dict[str, Any]) -> None:
-            reference_index.attach([claim], refs)
-
-        _map_claims(one, targets)
+        check_citations(state)
 
     def numbers() -> None:
-        results_text = str(sections.get("results") or "")
-        issues.extend(_number_issues(sections.get("abstract", ""), results_text))
-        targets = [
-            claim
-            for claim in typed_claims
-            if str(claim.get("claim_type") or "") in _NUMERIC_TYPES
-            and claim.get("section") == "abstract"
-        ]
-
-        def one(claim: dict[str, Any]) -> None:
-            _settle_abstract_number(claim, results_text, path)
-
-        _map_claims(one, targets)
+        check_numbers(state)
 
     def tables() -> None:
-        table_check.annotate(path, typed_claims)
+        check_tables(state)
 
     def dataset() -> None:
-        issues.extend(dataset_issues(claims, text))
+        state.add_issues(dataset_issues(claims, text))
 
     def reproduce() -> None:
         nonlocal kaggle
@@ -225,7 +306,8 @@ def audit_paper(
             except Exception:
                 produced = None
             if isinstance(produced, list):
-                _attach_computations(typed_claims, produced)
+                with state.lock:
+                    _attach_computations(typed_claims, produced)
             if isinstance(produced, dict):
                 kaggle = produced
             elif isinstance(produced, list):
@@ -253,13 +335,15 @@ def audit_paper(
         else:
             kaggle = _kaggle_result(None)
         if kaggle.get("status") in TEST_FAIL_STATUSES:
-            issues.append(
-                _issue(
-                    "test",
-                    str(kaggle.get("claim_text") or "Stored claim test disagreed with the paper."),
-                    str(kaggle.get("log") or kaggle.get("status") or ""),
-                    str(kaggle.get("detail") or "The stored claim test log disagrees with the paper."),
-                )
+            state.add_issues(
+                [
+                    _issue(
+                        "test",
+                        str(kaggle.get("claim_text") or "Stored claim test disagreed with the paper."),
+                        str(kaggle.get("log") or kaggle.get("status") or ""),
+                        str(kaggle.get("detail") or "The stored claim test log disagrees with the paper."),
+                    )
+                ]
             )
 
     def verify() -> None:
@@ -317,20 +401,38 @@ def audit_paper(
         hidden = probe.should_hide(auc)
         if hidden:
             hidden_sentence = HIDDEN_SENTENCE
-    for name in SPECIALISTS:
+
+    def execute(name: str) -> None:
         emit(name, "started", _STARTED[name])
         steps[name]()
+        with state.lock:
+            issue_snapshot = list(issues)
+            source = typed_claims if name in {"claims", "verify", "critic", "tables"} else claims
+            claim_snapshot = list(source)
+            kaggle_snapshot = dict(kaggle)
+            section_snapshot = sections
+            page_count = pages
         finished = _finished_detail(
             name,
-            pages=pages,
-            sections=sections,
-            claims=typed_claims if name in {"claims", "verify", "critic", "tables"} else claims,
-            issues=issues,
-            kaggle=kaggle,
+            pages=page_count,
+            sections=section_snapshot,
+            claims=claim_snapshot,
+            issues=issue_snapshot,
+            kaggle=kaggle_snapshot,
         )
         if name == "claims":
             finished = finished + claims_error
         emit(name, "finished", finished)
+
+    execute("parse")
+    execute("claims")
+    with ThreadPoolExecutor(max_workers=len(_PARALLEL_SPECIALISTS)) as pool:
+        futures = [pool.submit(execute, name) for name in _PARALLEL_SPECIALISTS]
+        for future in futures:
+            future.result()
+    _persist_visible_claims(job_id, typed_claims)
+    for name in _AFTER_SPECIALISTS:
+        execute(name)
     _annotate_pages(path, issues)
 
     for claim in typed_claims:
@@ -396,12 +498,21 @@ def _attach_evidence_claim(index: evidence_index.PaperIndex, claim: dict[str, An
                 "source": "paper",
             }
         )
+    # Numbers may already have written rows if that check won the race.
+    prior = [item for item in list(claim.get("evidence") or []) if isinstance(item, dict)]
     claim["evidence"] = evidence
     claim["_neighbors"] = index.around(str(claim.get("text") or ""), 6)
     evidence_index.merge_neighbors(claim)
+    if prior:
+        merged = list(claim.get("evidence") or [])
+        for item in prior:
+            if item not in merged:
+                merged.append(item)
+        claim["evidence"] = merged
     steps = list(claim.get("steps") or [])
-    steps.append("Retrieved supporting evidence")
-    steps.append("Searched for contradictory evidence")
+    for label in ("Retrieved supporting evidence", "Searched for contradictory evidence"):
+        if label not in steps:
+            steps.append(label)
     claim["steps"] = steps
 
 
@@ -512,6 +623,36 @@ def _kaggle_sentence(kaggle: dict[str, Any]) -> str:
     if status in TEST_FAIL_STATUSES:
         return "The stored claim test disagrees with the paper."
     return "The public table matches the count written in the paper."
+
+
+def _parsed_paper(path: str | Path) -> dict[str, Any]:
+    """Return cached parse artifacts, or open the PDF once and store them."""
+    digest = paper_cache.file_hash(path)
+    cached = paper_cache.get(digest)
+    if cached is not None:
+        return cached
+    body = load_paper(path)
+    page_count = _page_count(path)
+    parsed_sections = split_sections(body)
+    extracted_tables = table_check.read_tables(path)
+    extracted_references = reference_index.parse_references(
+        str(parsed_sections.get("references") or "")
+    )
+    paper_cache.put(
+        digest,
+        text=body,
+        sections=parsed_sections,
+        page_count=page_count,
+        tables=extracted_tables,
+        references=extracted_references,
+    )
+    return {
+        "text": body,
+        "sections": parsed_sections,
+        "page_count": page_count,
+        "tables": extracted_tables,
+        "references": extracted_references,
+    }
 
 
 def _page_count(path: str | Path) -> int:

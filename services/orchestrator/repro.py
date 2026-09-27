@@ -309,6 +309,11 @@ def find_table(slug: str, file_name: str) -> Path | None:
 
 
 def download_table(slug: str, file_name: str) -> Path | None:
+    import datasets
+
+    cached = datasets.lookup_table(slug)
+    if cached is not None:
+        return cached
     binary = _kaggle_bin()
     if not binary:
         return None
@@ -325,7 +330,10 @@ def download_table(slug: str, file_name: str) -> Path | None:
     )
     if completed.returncode != 0:
         return None
-    return find_table(slug, file_name)
+    table = find_table(slug, file_name)
+    if table is not None:
+        datasets.remember_table(slug, table)
+    return table
 
 
 def _close(actual: float, expected: int | float) -> bool:
@@ -683,9 +691,7 @@ def reproduce(
                 base["log"] = "Exact dataset version could not be verified."
             computations.append(base)
             continue
-        table = find_table(slug, "")
-        if table is None:
-            table = download_table(slug, "")
+        table = datasets.acquire_table(slug, "")
         if table is None:
             computations.append(base)
             continue

@@ -7,11 +7,14 @@ import hashlib
 import io
 import json
 import os
+import sqlite3
 import subprocess
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
 
 import jev
+import store
 import repro
 from dsl import Spec
 
@@ -42,6 +45,105 @@ CATALOG: dict[str, dict[str, Any]] = {
 
 Search = Callable[[str], list[dict[str, Any]]]
 Judge = Callable[[str, str], str | None]
+TableFinder = Callable[[str, str], Path | None]
+TableDownloader = Callable[[str, str], Path | None]
+
+
+def _normalize_slug(slug: str) -> str:
+    return slug.strip().lower()
+
+
+def _connect() -> sqlite3.Connection:
+    conn = store.connect(store.default_db_path())
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS dataset_tables (
+            slug TEXT PRIMARY KEY,
+            local_path TEXT NOT NULL,
+            created_at TEXT NOT NULL
+        )
+        """
+    )
+    return conn
+
+
+def _under_download_roots(path: Path, slug: str) -> bool:
+    """A default acquire only reuses files in the download folders find_table already searches."""
+    resolved = path.resolve()
+    roots = [
+        Path(repro.DOWNLOADS).resolve(),
+        (repro.REPO_ROOT / "services" / "orchestrator" / ".arxiv-cache" / "datasets" / slug.replace("/", "__")).resolve(),
+    ]
+    return any(resolved == root or root in resolved.parents for root in roots)
+
+
+def lookup_table(slug: str) -> Path | None:
+    key = _normalize_slug(slug)
+    if not key:
+        return None
+    conn = _connect()
+    try:
+        row = conn.execute(
+            "SELECT local_path FROM dataset_tables WHERE slug = ?",
+            (key,),
+        ).fetchone()
+    finally:
+        conn.close()
+    if row is None:
+        return None
+    path = Path(str(row["local_path"]))
+    if path.is_file():
+        return path
+    return None
+
+
+def remember_table(slug: str, path: Path) -> None:
+    key = _normalize_slug(slug)
+    if not key or not path.is_file():
+        return
+    resolved = path.resolve()
+    conn = _connect()
+    try:
+        conn.execute(
+            """
+            INSERT INTO dataset_tables (slug, local_path, created_at)
+            VALUES (?, ?, ?)
+            ON CONFLICT(slug) DO UPDATE SET
+                local_path = excluded.local_path,
+                created_at = excluded.created_at
+            """,
+            (key, str(resolved), datetime.now(timezone.utc).isoformat()),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def acquire_table(
+    slug: str,
+    file_name: str = "",
+    *,
+    find: TableFinder | None = None,
+    download: TableDownloader | None = None,
+) -> Path | None:
+    key = _normalize_slug(slug)
+    if not key:
+        return None
+    finder = find if find is not None else repro.find_table
+    table = finder(key, file_name)
+    if table is not None:
+        remember_table(key, table)
+        return table
+    cached = lookup_table(key)
+    if cached is not None and (
+        find is not None or download is not None or _under_download_roots(cached, key)
+    ):
+        return cached
+    downloader = download if download is not None else repro.download_table
+    table = downloader(key, file_name)
+    if table is not None:
+        remember_table(key, table)
+    return table
 
 
 def _candidate(slug: str, title: str = "", columns: list[str] | None = None, rows: int | None = None) -> dict[str, Any]:

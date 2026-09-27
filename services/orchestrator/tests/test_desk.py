@@ -1,7 +1,9 @@
+import threading
 import time
 from pathlib import Path
 from fastapi.testclient import TestClient
 
+import desk
 from app import app
 
 def _client(tmp_path, monkeypatch) -> TestClient:
@@ -37,6 +39,76 @@ def test_more_than_eight_ids_stay_queued(tmp_path, monkeypatch):
     assert desk.status_code == 200
     assert len(desk.json()["papers"]) == 11
     assert all(paper["status"] == "queued" for paper in desk.json()["papers"])
+
+
+def test_two_workers_run_second_paper_before_first_finishes(tmp_path, monkeypatch):
+    monkeypatch.setenv("DESK_WORKERS", "2")
+    first_block = threading.Event()
+    second_block = threading.Event()
+
+    def latched_audit(job_id: str) -> None:
+        with desk._db() as conn:
+            desk._ensure_desk(conn)
+            row = conn.execute(
+                "SELECT * FROM paper_jobs WHERE job_id = ?", (job_id,)
+            ).fetchone()
+            if row is None or row["status"] != "queued":
+                return
+            conn.execute(
+                """
+                UPDATE paper_jobs
+                SET status = 'running', specialist = 'ingest'
+                WHERE job_id = ?
+                """,
+                (job_id,),
+            )
+            conn.commit()
+            arxiv_id = row["arxiv_id"]
+        if arxiv_id == "0000.00001":
+            first_block.wait(timeout=30)
+        elif arxiv_id == "0000.00002":
+            second_block.wait(timeout=30)
+        with desk._db() as conn:
+            desk._ensure_desk(conn)
+            conn.execute(
+                """
+                UPDATE paper_jobs
+                SET status = 'passed', specialist = 'stamp', fitness = 1.0
+                WHERE job_id = ?
+                """,
+                (job_id,),
+            )
+            conn.commit()
+
+    monkeypatch.setattr(desk, "_audit_job", latched_audit)
+    client = _client(tmp_path, monkeypatch)
+    conference_id = _conference(client)
+    client.post(
+        f"/desk/conferences/{conference_id}/submissions",
+        json={"lines": ["0000.00001", "0000.00002", "0000.00003"]},
+    )
+    client.post(f"/desk/conferences/{conference_id}/run", json={})
+
+    overlapped = False
+    for _ in range(200):
+        papers = client.get(f"/desk/conferences/{conference_id}").json()["papers"]
+        first, second = papers[0], papers[1]
+        if second["status"] == "running" and first["status"] == "running":
+            overlapped = True
+            break
+        if first["status"] in {"passed", "contradicted", "error"}:
+            break
+        time.sleep(0.02)
+
+    assert overlapped, "second paper should enter running while the first is still running"
+    first_block.set()
+    second_block.set()
+
+    for _ in range(200):
+        papers = client.get(f"/desk/conferences/{conference_id}").json()["papers"]
+        if all(item["status"] in {"passed", "contradicted", "error"} for item in papers[:3]):
+            break
+        time.sleep(0.02)
 
 
 def test_cap_audits_one_fixture_and_leaves_the_rest(tmp_path, monkeypatch):

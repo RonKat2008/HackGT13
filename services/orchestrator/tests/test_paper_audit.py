@@ -1,8 +1,13 @@
 import json
+import os
+import threading
 from pathlib import Path
+
+os.environ.setdefault("ARX_EMBEDDER", "hash")
 
 import pytest
 
+import paper_audit
 from paper_audit import SPECIALISTS, audit_paper, load_paper, split_sections
 
 FIXTURES = Path(__file__).resolve().parents[1] / "fixtures"
@@ -85,13 +90,32 @@ def test_split_sections_no_headings_is_weak_other() -> None:
     assert sections["section_quality"] == "weak"
 
 
+def _assert_parallel_specialist_order(recorded: list[tuple[str, str]]) -> None:
+    """Parse and claims finish first. The parallel group may overlap. Verify is after it."""
+
+    def at(name: str, phase: str) -> int:
+        return next(index for index, item in enumerate(recorded) if item == (name, phase))
+
+    assert at("parse", "started") < at("parse", "finished") < at("claims", "started") < at("claims", "finished")
+    claims_done = at("claims", "finished")
+    parallel = ("evidence", "citations", "numbers", "tables", "dataset", "reproduce")
+    for name in parallel:
+        assert claims_done < at(name, "started") < at(name, "finished")
+    group_done = max(at(name, "finished") for name in parallel)
+    assert group_done < at("verify", "started") < at("verify", "finished")
+    assert at("verify", "finished") < at("critic", "started") < at("critic", "finished")
+    assert at("critic", "finished") < at("stamp", "started") < at("stamp", "finished")
+    started = [name for name, phase in recorded if phase == "started"]
+    finished = [name for name, phase in recorded if phase == "finished"]
+    assert sorted(started) == sorted(SPECIALISTS)
+    assert sorted(finished) == sorted(SPECIALISTS)
+    assert len(started) == len(SPECIALISTS)
+    assert len(finished) == len(SPECIALISTS)
+
+
 def test_audit_records_started_then_finished_for_each_specialist() -> None:
     calls, recorder = _collecting_recorder()
     result = audit_paper(HUMAN, "job-1", recorder=recorder)
-    expected: list[tuple[str, str, str]] = []
-    for name in SPECIALISTS:
-        expected.append(("job-1", name, "started"))
-        expected.append(("job-1", name, "finished"))
     assert SPECIALISTS == [
         "parse",
         "claims",
@@ -105,10 +129,11 @@ def test_audit_records_started_then_finished_for_each_specialist() -> None:
         "critic",
         "stamp",
     ]
-    assert [(job_id, name, state) for job_id, name, state, _detail in calls] == expected
-    assert [(event["specialist"], event["state"]) for event in result["events"]] == [
-        (name, state) for _job_id, name, state in expected
-    ]
+    recorded = [(name, state) for job_id, name, state, _detail in calls]
+    assert all(job_id == "job-1" for job_id, _name, _state, _detail in calls)
+    streamed = [(event["specialist"], event["state"]) for event in result["events"]]
+    assert streamed == recorded
+    _assert_parallel_specialist_order(recorded)
 
 
 def test_default_recorder_is_shelf_record_event(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -403,3 +428,65 @@ def test_audit_does_not_call_openrouter_or_xai(monkeypatch: pytest.MonkeyPatch) 
         pass
     _calls, recorder = _collecting_recorder()
     audit_paper(HALLUCINATED, "job-offline", recorder=recorder)
+
+
+def test_parallel_checks_overlap_and_keep_number_and_table_misses(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("ARX_EMBEDDER", "hash")
+    barrier = threading.Barrier(4)
+    entered: list[str] = []
+    entry_lock = threading.Lock()
+
+    def guard(name: str, original: object) -> object:
+        def wrapped(*args: object, **kwargs: object) -> object:
+            with entry_lock:
+                entered.append(name)
+            barrier.wait(timeout=15)
+            return original(*args, **kwargs)  # type: ignore[operator]
+
+        return wrapped
+
+    monkeypatch.setattr(
+        paper_audit,
+        "check_citations",
+        guard("citations", paper_audit.check_citations),
+    )
+    monkeypatch.setattr(
+        paper_audit,
+        "check_evidence",
+        guard("evidence", paper_audit.check_evidence),
+    )
+    monkeypatch.setattr(
+        paper_audit,
+        "check_numbers",
+        guard("numbers", paper_audit.check_numbers),
+    )
+    monkeypatch.setattr(
+        paper_audit,
+        "check_tables",
+        guard("tables", paper_audit.check_tables),
+    )
+
+    demo = FIXTURES / "demo_paper.pdf"
+    _calls, recorder = _collecting_recorder()
+    result = audit_paper(demo, "job-parallel-checks", recorder=recorder)
+    assert set(entered) == {"citations", "evidence", "numbers", "tables"}
+    assert len(entered) == 4
+
+    number = next(
+        item
+        for item in result["claims"]
+        if item["claim_type"] == "numerical" and "95.2" in item["text"]
+    )
+    table = next(
+        item
+        for item in result["claims"]
+        if item["claim_type"] == "numerical_comparison" and "7.8" in item["text"]
+    )
+    assert number["verdict"] == "contradicted"
+    assert "95.2" in str(number.get("reason") or number.get("text") or "")
+    assert table["verdict"] == "contradicted"
+    assert table["computation"]["spec"]["computed"] == 4.5
+    number_issue = next(issue for issue in result["issues"] if issue["issue_type"] == "number")
+    assert "95.2" in number_issue["claim_text"] or "95.2" in number_issue["evidence_span"]

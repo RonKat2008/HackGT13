@@ -162,6 +162,71 @@ def test_attach_stores_the_catalog_on_the_claim(tmp_path, monkeypatch) -> None:
     assert any(item["catalog"] == "crossref" for item in claims[0]["catalog"]["queried"])
 
 
+def test_same_doi_hits_transport_once_for_two_queries(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("RUN_DB", str(tmp_path / "catalog.sqlite"))
+    calls: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append(request.url.host or "")
+        return _vaswani(request)
+
+    transport = _transport(handler)
+    query_a = "Vaswani et al. 2017 Attention is all you need NeurIPS"
+    query_b = "See Vaswani, A., et al. (2017). Attention is all you need."
+    first = lookup(query_a, VASWANI, transport=transport)
+    second = lookup(query_b, VASWANI, transport=transport)
+    verdict_a, confidence_a, _ = decide(_claim("A"), first)
+    verdict_b, confidence_b, _ = decide(_claim("B"), second)
+    assert verdict_a == "supported" and verdict_b == "supported"
+    assert confidence_a >= 0.85 and confidence_b >= 0.85
+    assert len(calls) == 3
+
+
+def test_attach_same_doi_does_not_repeat_catalog_http(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("RUN_DB", str(tmp_path / "catalog.sqlite"))
+    references = (
+        "1. Vaswani, A. (2017). Attention is all you need. doi:10.48550/arXiv.1706.03762\n"
+        "2. Vaswani, A. (2017). Attention is all you need. doi:10.48550/arXiv.1706.03762"
+    )
+    claims = [
+        _claim("First mention (Vaswani et al., 2017)."),
+        _claim("Second mention (Vaswani et al., 2017)."),
+    ]
+    calls: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append(request.url.host or "")
+        return _vaswani(request)
+
+    attach(claims, references, transport=_transport(handler))
+    assert claims[0]["verdict"] == "supported"
+    assert claims[1]["verdict"] == "supported"
+    assert len(calls) == 3
+
+
+def test_catalog_error_retries_once_then_skips_http(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("RUN_DB", str(tmp_path / "catalog.sqlite"))
+    import catalogs as catalogs_mod
+
+    catalogs_mod._error_retried.clear()
+    calls: list[int] = []
+
+    def handler(_request: httpx.Request) -> httpx.Response:
+        calls.append(1)
+        return httpx.Response(503, json={"error": "down"})
+
+    transport = _transport(handler)
+    query = VASWANI["raw"] + " retry-once"
+    first = lookup(query, VASWANI, transport=transport)
+    second = lookup(query + " again", VASWANI, transport=transport)
+    third = lookup(query + " third", VASWANI, transport=transport)
+    for catalog in (first, second, third):
+        verdict, confidence, _ = decide(_claim("See (Vaswani et al., 2017)."), catalog)
+        assert verdict == "not_checked"
+        assert confidence == 0.0
+    assert len(calls) == 6
+
+
 def test_strong_title_match_wins_over_a_catalog_error() -> None:
     catalog = {
         "queried": [

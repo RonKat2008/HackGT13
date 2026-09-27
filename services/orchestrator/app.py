@@ -30,6 +30,7 @@ from desk import (
     link_account,
     list_conferences,
     login,
+    conference_metrics,
     paper_desk,
     paper_file,
     paper_report,
@@ -231,9 +232,31 @@ def list_playbook(product: Product) -> list[Patch]:
         return top_patches(conn, str(product))
 
 
+class VoiceCommandBody(BaseModel):
+    text: str = ""
+    papers: list[dict] = []
+
+
 @app.post("/voice/token")
-def voice_token() -> None:
-    raise HTTPException(status_code=501, detail="not implemented")
+def voice_token() -> dict:
+    secret = voice.client_secret()
+    if secret is None:
+        raise HTTPException(status_code=503, detail="voice key missing")
+    return secret
+
+
+@app.post("/voice/command")
+def voice_command(body: VoiceCommandBody) -> dict:
+    papers = [
+        {
+            "job_id": str(item.get("job_id") or ""),
+            "arxiv_id": str(item.get("arxiv_id") or ""),
+            "title": str(item.get("title") or ""),
+        }
+        for item in body.papers
+        if isinstance(item, dict)
+    ]
+    return {"action": voice.screen_command(body.text, papers)}
 
 
 @app.post("/batches")
@@ -394,6 +417,16 @@ def desk_run(conference_id: str, body: RunBody) -> dict:
 def desk_conference(conference_id: str) -> dict:
     try:
         return conference_desk(conference_id)
+    except BatchError as exc:
+        _batch_http(exc)
+
+
+
+
+@app.get("/desk/metrics")
+def desk_metrics(conference_id: str = Query(...)) -> dict:
+    try:
+        return conference_metrics(conference_id)
     except BatchError as exc:
         _batch_http(exc)
 

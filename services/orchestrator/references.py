@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import re
+from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 
 import claims as claim_extract
@@ -119,9 +120,8 @@ def attach(claims: list[dict[str, Any]], references_text: str, transport: Any = 
     import catalogs
 
     entries = parse_references(references_text)
-    for claim in claims:
-        if str(claim.get("claim_type") or "") != "citation":
-            continue
+
+    def _resolve(claim: dict[str, Any]) -> None:
         entry = match_entry(str(claim.get("text") or ""), entries)
         query = str(entry["raw"] if entry else claim.get("text") or "")
         catalog = catalogs.lookup(query, entry or {}, transport=transport)
@@ -134,3 +134,9 @@ def attach(claims: list[dict[str, Any]], references_text: str, transport: Any = 
         steps = list(claim.get("steps") or [])
         steps.append("Queried Crossref, OpenAlex, and Semantic Scholar.")
         claim["steps"] = steps
+
+    citation_claims = [claim for claim in claims if str(claim.get("claim_type") or "") == "citation"]
+    if not citation_claims:
+        return
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        list(pool.map(_resolve, citation_claims))

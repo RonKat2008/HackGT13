@@ -60,11 +60,16 @@ def test_demo_paper_audit_stays_under_60s_with_stable_events(tmp_path, monkeypat
     elapsed = time.perf_counter() - started
     print(f"audit_paper elapsed seconds: {elapsed:.3f}")
 
-    expected: list[tuple[str, str]] = []
+    started_names = [name for name, state in events if state == "started"]
+    finished_names = [name for name, state in events if state == "finished"]
     for name in SPECIALISTS:
-        expected.append((name, "started"))
-        expected.append((name, "finished"))
-    assert events == expected
-    assert list(SPECIALISTS) == [name for name, state in events if state == "started"]
+        assert started_names.count(name) == 1
+        assert finished_names.count(name) == 1
+    assert finished_names.index("parse") < started_names.index("claims")
+    assert finished_names.index("claims") < min(
+        started_names.index(name)
+        for name in ("evidence", "citations", "numbers", "tables")
+    )
+    assert finished_names[-1] == "stamp"
     assert elapsed < 60
     assert result["claims"]

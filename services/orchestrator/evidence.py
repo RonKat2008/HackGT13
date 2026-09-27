@@ -3,16 +3,21 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import os
 import re
+from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
 import fitz
 import numpy as np
 
 import claims as claim_extract
+import paper_cache
 from shelf import EMBED_DIM, _default_embedder
+
+_EVIDENCE_TYPES = frozenset({"semantic", "numerical", "numerical_comparison"})
 
 CACHE_DIR = Path(__file__).resolve().parent / ".arxiv-cache" / "emb"
 NUMBER_RE = re.compile(r"\d+(?:\.\d+)?")
@@ -32,32 +37,56 @@ _MINILM: tuple[Any, Any] | None = None
 _MINILM_FAILED = False
 
 
-def _embedder() -> Callable[[str], list[float]]:
-    if _use_hash():
-        return _default_embedder
+def _planned_mode() -> str:
+    if _use_hash() or _MINILM_FAILED:
+        return "hash"
+    return "minilm"
+
+
+def _embed_many(texts: list[str]) -> np.ndarray:
+    """Embed a list in one call. Hash mode is one comprehension, not a model loop."""
+    if not texts:
+        return np.zeros((0, EMBED_DIM), dtype=float)
+    if _use_hash() or not _ensure_minilm():
+        return np.asarray([_default_embedder(text) for text in texts], dtype=float)
+    return _minilm_matrix(texts)
+
+
+def _embed_claim_texts(texts: list[str]) -> np.ndarray:
+    return _embed_many(texts)
+
+
+def _ensure_minilm() -> bool:
     global _MINILM, _MINILM_FAILED
     if _MINILM_FAILED:
-        return _default_embedder
+        return False
     if _MINILM is None:
         loaded = _load_minilm()
         if loaded is None:
             _MINILM_FAILED = True
-            return _default_embedder
+            return False
         _MINILM = loaded
+    return True
+
+
+def _minilm_matrix(texts: list[str]) -> np.ndarray:
+    import torch
+
     tokenizer, model = _MINILM
-
-    def embed(text: str) -> list[float]:
-        import torch
-
-        tokens = tokenizer(text or " ", return_tensors="pt", truncation=True, max_length=256)
-        with torch.no_grad():
-            hidden = model(**tokens).last_hidden_state
-            mask = tokens["attention_mask"].unsqueeze(-1).expand(hidden.size()).float()
-            pooled = (hidden * mask).sum(dim=1) / mask.sum(dim=1).clamp(min=1e-9)
-            pooled = torch.nn.functional.normalize(pooled, p=2, dim=1)
-        return [float(value) for value in pooled[0].tolist()]
-
-    return embed
+    assert tokenizer is not None and model is not None
+    tokens = tokenizer(
+        [text or " " for text in texts],
+        return_tensors="pt",
+        truncation=True,
+        max_length=256,
+        padding=True,
+    )
+    with torch.no_grad():
+        hidden = model(**tokens).last_hidden_state
+        mask = tokens["attention_mask"].unsqueeze(-1).expand(hidden.size()).float()
+        pooled = (hidden * mask).sum(dim=1) / mask.sum(dim=1).clamp(min=1e-9)
+        pooled = torch.nn.functional.normalize(pooled, p=2, dim=1)
+    return np.asarray(pooled.detach().cpu().numpy(), dtype=float)
 
 
 def _load_minilm() -> tuple[Any, Any] | None:
@@ -73,15 +102,30 @@ def _load_minilm() -> tuple[Any, Any] | None:
         return None
 
 
-def _cosine_matrix(query: np.ndarray, matrix: np.ndarray) -> np.ndarray:
-    query_norm = float(np.linalg.norm(query))
-    row_norms = np.linalg.norm(matrix, axis=1)
-    denom = row_norms * query_norm
-    dots = matrix @ query
-    scores = np.zeros(len(matrix), dtype=float)
+def _similarity_matrix(queries: np.ndarray, matrix: np.ndarray) -> np.ndarray:
+    """Cosine scores with shape [queries × chunks]."""
+    queries = np.asarray(queries, dtype=float)
+    matrix = np.asarray(matrix, dtype=float)
+    if queries.ndim == 1:
+        queries = queries.reshape(1, -1)
+    if matrix.ndim == 1:
+        matrix = matrix.reshape(1, -1)
+    rows = int(queries.shape[0]) if queries.ndim == 2 else 0
+    cols = int(matrix.shape[0]) if matrix.ndim == 2 else 0
+    if rows == 0 or cols == 0 or int(queries.shape[-1]) == 0 or int(matrix.shape[-1]) == 0:
+        return np.zeros((rows, cols), dtype=float)
+    query_norms = np.linalg.norm(queries, axis=1, keepdims=True)
+    row_norms = np.linalg.norm(matrix, axis=1, keepdims=True)
+    denom = query_norms @ row_norms.T
+    dots = queries @ matrix.T
+    scores = np.zeros(dots.shape, dtype=float)
     ok = denom > 0
     scores[ok] = dots[ok] / denom[ok]
     return scores
+
+
+def _cosine_matrix(query: np.ndarray, matrix: np.ndarray) -> np.ndarray:
+    return _similarity_matrix(np.asarray(query, dtype=float).reshape(1, -1), matrix)[0]
 
 
 def _numbers(text: str) -> set[str]:
@@ -118,7 +162,8 @@ class PaperIndex:
     def __init__(self, path: str | Path, sections: dict[str, str]) -> None:
         self.path = Path(path)
         self.chunks = _chunks(self.path, sections)
-        self.vectors = _vectors(self.path, [chunk["text"] for chunk in self.chunks])
+        self.chunk_matrix = _vectors(self.path, [chunk["text"] for chunk in self.chunks])
+        self.vectors = self.chunk_matrix
 
     def around(self, text: str, n: int = 2) -> list[dict[str, Any]]:
         target = -1
@@ -141,9 +186,41 @@ class PaperIndex:
             picked.append(chunk)
         return picked
 
+    def claim_similarity(self, claims: list[dict[str, Any]]) -> np.ndarray:
+        """One [C × N] cosine matrix. Claim texts are embedded in a single batch."""
+        texts = [str(claim.get("text") or "") for claim in claims]
+        width = int(self.chunk_matrix.shape[0]) if self.chunk_matrix.ndim == 2 else 0
+        if not texts:
+            return np.zeros((0, width), dtype=float)
+        return _similarity_matrix(_embed_claim_texts(texts), self.chunk_matrix)
+
     def retrieve(
         self,
         claim_text: str,
+        k: int = 5,
+        sections: set[str] | None = None,
+        prefer_conflicts: bool = False,
+    ) -> list[dict[str, Any]]:
+        if not self.chunks or k <= 0:
+            return []
+        cached = _read_retrieval_cache(self.path, claim_text)
+        if cached is not None:
+            return cached
+        row = _cosine_matrix(_embed_many([claim_text])[0], self.chunk_matrix)
+        hits = self.hits_from_scores(
+            claim_text,
+            row,
+            k=k,
+            sections=sections,
+            prefer_conflicts=prefer_conflicts,
+        )
+        _write_retrieval_cache(self.path, claim_text, hits)
+        return hits
+
+    def hits_from_scores(
+        self,
+        claim_text: str,
+        scores: np.ndarray,
         k: int = 5,
         sections: set[str] | None = None,
         prefer_conflicts: bool = False,
@@ -157,21 +234,19 @@ class PaperIndex:
         ]
         if not chosen:
             return []
-        query = np.asarray(_embedder()(claim_text), dtype=float)
-        matrix = self.vectors[np.asarray(chosen)]
-        scores = _cosine_matrix(query, matrix)
+        picked = np.asarray(scores, dtype=float)[np.asarray(chosen)]
         ranked = sorted(
             range(len(chosen)),
             key=lambda slot: (
                 0 if prefer_conflicts and conflicts(claim_text, self.chunks[chosen[slot]]["text"]) else 1,
                 -_overlap(claim_text, self.chunks[chosen[slot]]["text"]) if _rank_by_overlap() else 0,
-                -float(scores[slot]),
+                -float(picked[slot]),
             ),
         )
         hits: list[dict[str, Any]] = []
         for slot in ranked[:k]:
             chunk = dict(self.chunks[chosen[slot]])
-            chunk["score"] = float(scores[slot])
+            chunk["score"] = float(picked[slot])
             hits.append(chunk)
         return hits
 
@@ -213,40 +288,93 @@ def _chunks(path: Path, sections: dict[str, str]) -> list[dict[str, Any]]:
         doc.close()
 
 
+def _chunk_fingerprint(texts: list[str]) -> str:
+    digest = hashlib.sha256()
+    for text in texts:
+        raw = text.encode("utf-8")
+        digest.update(len(raw).to_bytes(8, "big"))
+        digest.update(raw)
+    return digest.hexdigest()
+
+
+def _cached_chunk_matrix(digest: str, texts: list[str], mode: str) -> np.ndarray | None:
+    try:
+        loaded = paper_cache.load_chunk_matrix(digest)
+    except Exception:
+        return None
+    if loaded is None:
+        return None
+    matrix, embedder, fingerprint = loaded
+    if embedder != mode or fingerprint != _chunk_fingerprint(texts):
+        return None
+    if matrix.ndim != 2 or matrix.shape[0] != len(texts):
+        return None
+    return np.asarray(matrix, dtype=float)
+
+
+def _store_chunk_matrix(digest: str, texts: list[str], matrix: np.ndarray, mode: str) -> None:
+    if mode not in {"hash", "minilm"} or matrix.ndim != 2 or matrix.shape[0] != len(texts):
+        return
+    try:
+        paper_cache.store_chunk_matrix(
+            digest,
+            matrix,
+            embedder=mode,
+            fingerprint=_chunk_fingerprint(texts),
+        )
+    except Exception:
+        return
+
+
 def _vectors(path: Path, texts: list[str]) -> np.ndarray:
     if not texts:
         return np.zeros((0, EMBED_DIM), dtype=float)
-    digest = hashlib.sha256(path.read_bytes()).hexdigest()
-    cache = CACHE_DIR / f"{digest}.npy"
-    if cache.is_file() and not _use_hash():
-        loaded = np.load(cache)
-        if loaded.shape == (len(texts), loaded.shape[-1] if loaded.ndim == 2 else 0):
-            if loaded.shape[0] == len(texts):
-                return loaded
-    embed = _embedder()
-    matrix = np.asarray([embed(text) for text in texts], dtype=float)
+    digest = paper_cache.file_hash(path)
+    mode = _planned_mode()
+    cached = _cached_chunk_matrix(digest, texts, mode)
+    if cached is not None:
+        return cached
+    npy = CACHE_DIR / f"{digest}.npy"
+    if npy.is_file() and mode != "hash":
+        loaded = np.load(npy)
+        if loaded.ndim == 2 and loaded.shape[0] == len(texts):
+            matrix = np.asarray(loaded, dtype=float)
+            _store_chunk_matrix(digest, texts, matrix, "minilm")
+            return matrix
+    matrix = _embed_many(texts)
     if matrix.ndim == 1:
         matrix = matrix.reshape(1, -1)
-    if not _use_hash():
+    actual = _planned_mode()
+    if actual != "hash":
         CACHE_DIR.mkdir(parents=True, exist_ok=True)
-        np.save(cache, matrix)
+        np.save(npy, matrix)
+    _store_chunk_matrix(digest, texts, matrix, actual)
     return matrix
 
 
 def attach(path: str | Path, sections: dict[str, str], typed_claims: list[dict[str, Any]]) -> None:
     index = PaperIndex(path, sections)
-    for claim in typed_claims:
-        if claim.get("claim_type") not in {"semantic", "numerical", "numerical_comparison"}:
-            continue
-        supporting = index.verifier(claim)
-        contradicting = index.falsifier(claim)
+    targets = [claim for claim in typed_claims if claim.get("claim_type") in _EVIDENCE_TYPES]
+    scores = index.claim_similarity(targets)
+    for claim, row in zip(targets, scores):
+        text = str(claim.get("text") or "")
+        supporting = index.hits_from_scores(text, row, k=5)
+        section = str(claim.get("section") or "")
+        others = {chunk["section"] for chunk in index.chunks if chunk["section"] != section}
+        contradicting = index.hits_from_scores(
+            text,
+            row,
+            k=5,
+            sections=others or None,
+            prefer_conflicts=True,
+        )
         evidence: list[dict[str, Any]] = []
         for hit in supporting:
             evidence.append(_evidence_row(hit, "supports"))
         for hit in contradicting:
             evidence.append(_evidence_row(hit, "contradicts"))
         claim["evidence"] = evidence
-        claim["_neighbors"] = index.around(str(claim.get("text") or ""), 6)
+        claim["_neighbors"] = index.around(text, 6)
         merge_neighbors(claim)
         steps = list(claim.get("steps") or [])
         steps.append("Retrieved supporting evidence")
@@ -290,3 +418,79 @@ def _evidence_row(hit: dict[str, Any], role: str) -> dict[str, Any]:
         "role": role,
         "source": "paper",
     }
+
+
+def _claim_hash(claim_text: str) -> str:
+    return hashlib.sha256(claim_text.encode()).hexdigest()
+
+
+def _retrieval_cache_key(paper_hash: str, claim_text: str) -> str:
+    body = f"{paper_hash}\n{_claim_hash(claim_text)}"
+    return hashlib.sha256(body.encode()).hexdigest()
+
+
+def _read_retrieval_cache(path: Path, claim_text: str) -> list[dict[str, Any]] | None:
+    if not path.is_file():
+        return None
+    try:
+        paper_hash = paper_cache.file_hash(path)
+    except OSError:
+        return None
+    key = _retrieval_cache_key(paper_hash, claim_text)
+    conn = _retrieval_connect()
+    try:
+        row = conn.execute(
+            "SELECT rows_json FROM retrieval_cache WHERE cache_key = ?",
+            (key,),
+        ).fetchone()
+    finally:
+        conn.close()
+    if row is None:
+        return None
+    try:
+        loaded = json.loads(row["rows_json"])
+    except (TypeError, ValueError):
+        return None
+    if not isinstance(loaded, list):
+        return None
+    return [dict(item) for item in loaded if isinstance(item, dict)]
+
+
+def _write_retrieval_cache(path: Path, claim_text: str, rows: list[dict[str, Any]]) -> None:
+    if not path.is_file():
+        return
+    try:
+        paper_hash = paper_cache.file_hash(path)
+    except OSError:
+        return
+    key = _retrieval_cache_key(paper_hash, claim_text)
+    conn = _retrieval_connect()
+    try:
+        conn.execute(
+            """
+            INSERT INTO retrieval_cache (cache_key, rows_json, created_at)
+            VALUES (?, ?, ?)
+            ON CONFLICT(cache_key) DO UPDATE SET
+                rows_json = excluded.rows_json
+            """,
+            (key, json.dumps(rows), datetime.now(timezone.utc).isoformat()),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def _retrieval_connect():
+    from store import connect, default_db_path
+
+    conn = connect(default_db_path())
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS retrieval_cache (
+            cache_key TEXT PRIMARY KEY,
+            rows_json TEXT NOT NULL,
+            created_at TEXT NOT NULL
+        )
+        """
+    )
+    return conn

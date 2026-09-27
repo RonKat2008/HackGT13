@@ -30,20 +30,33 @@ def _loaded(path: str):
 
 
 def generate(path: Path, system: str, user: str) -> str:
+    many = generate_many(path, system, [user])
+    return many[0] if many else ""
+
+
+def generate_many(path: Path, system: str, users: list[str]) -> list[str]:
+    if not users:
+        return []
     from mlx_lm import generate as mlx_generate
     from mlx_lm.sample_utils import make_sampler
 
     model, tokenizer = _loaded(str(path))
-    messages = [
-        {"role": "system", "content": system},
-        {"role": "user", "content": user},
-    ]
-    prompt = tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
-    return mlx_generate(
-        model,
-        tokenizer,
-        prompt=prompt,
-        max_tokens=80,
-        sampler=make_sampler(temp=0),
-        verbose=False,
-    )
+    sampler = make_sampler(temp=0)
+    outputs: list[str] = []
+    for user in users:
+        messages = [
+            {"role": "system", "content": system},
+            {"role": "user", "content": user},
+        ]
+        prompt = tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
+        outputs.append(
+            mlx_generate(
+                model,
+                tokenizer,
+                prompt=prompt,
+                max_tokens=80,
+                sampler=sampler,
+                verbose=False,
+            )
+        )
+    return outputs

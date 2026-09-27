@@ -71,7 +71,27 @@ def accepts(answer: dict[str, Any]) -> bool:
 
 def cache_key(claim_text: str, evidence: list[dict[str, Any]], model: str) -> str:
     body = claim_text + "\n" + evidence_text(evidence) + "\n" + model
+    if model == "local" or model.startswith("local:"):
+        body += "\n" + _adapter_identity(model)
     return hashlib.sha256(body.encode()).hexdigest()
+
+
+def _adapter_identity(model: str) -> str:
+    from pathlib import Path
+
+    from lya_local import ADAPTER_DIR
+
+    raw = model.strip()
+    if raw == "local":
+        path = ADAPTER_DIR
+    elif raw.startswith("local:"):
+        path = Path(raw.split(":", 1)[1]).expanduser()
+    else:
+        return ""
+    adapter = path / "adapters.safetensors"
+    if adapter.is_file():
+        return f"local{adapter.stat().st_mtime_ns}"
+    return "local-missing-adapter"
 
 
 def evidence_text(evidence: list[dict[str, Any]]) -> str:
@@ -114,6 +134,54 @@ def _judge_local(claim_text: str, rows: list[dict[str, Any]], model: str) -> dic
         return dict(_NOT_RUN)
     _write_cache(key_hash, parsed["verdict"], parsed["confidence"])
     return parsed
+
+
+def judge_claims(pairs: list[tuple[str, list[dict[str, Any]]]]) -> list[dict[str, Any]]:
+    """Judge many claim/evidence pairs. Cache hits skip generation; local misses batch once."""
+    if not pairs:
+        return []
+    model = model_id()
+    results: list[dict[str, Any]] = [dict(_NOT_RUN) for _ in pairs]
+    local_misses: list[tuple[int, str, list[dict[str, Any]], str]] = []
+    api_misses: list[tuple[int, str, list[dict[str, Any]]]] = []
+
+    for index, (claim_text, rows) in enumerate(pairs):
+        key_hash = cache_key(claim_text, rows, model)
+        cached = _read_cache(key_hash)
+        if cached is not None:
+            results[index] = cached
+            continue
+        if model == "local" or model.startswith("local:"):
+            local_misses.append((index, claim_text, rows, key_hash))
+        else:
+            api_misses.append((index, claim_text, rows))
+
+    for index, claim_text, rows in api_misses:
+        results[index] = judge_claim(claim_text, rows)
+
+    if local_misses:
+        from lya_local import adapter_dir, generate_many
+
+        path = adapter_dir(model)
+        if path is None:
+            for index, _, _, _ in local_misses:
+                results[index] = dict(_NOT_RUN)
+        else:
+            users = [user_prompt(claim_text, rows) for _, claim_text, rows, _ in local_misses]
+            try:
+                contents = generate_many(path, SYSTEM, users)
+            except (OSError, RuntimeError, ValueError):
+                contents = []
+            for slot, (index, claim_text, rows, key_hash) in enumerate(local_misses):
+                content = contents[slot] if slot < len(contents) else ""
+                parsed = _parse(content)
+                if parsed is None:
+                    results[index] = dict(_NOT_RUN)
+                else:
+                    _write_cache(key_hash, parsed["verdict"], parsed["confidence"])
+                    results[index] = parsed
+
+    return results
 
 
 def judge_claim(

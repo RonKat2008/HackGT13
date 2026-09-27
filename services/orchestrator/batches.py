@@ -540,6 +540,7 @@ def create_batch(payload: dict[str, Any]) -> dict[str, Any]:
                 _now(),
             ),
         )
+        conn.commit()
         for position, arxiv_id in enumerate(arxiv_ids):
             _process_job(conn, batch_id, str(arxiv_id), position)
         conn.commit()

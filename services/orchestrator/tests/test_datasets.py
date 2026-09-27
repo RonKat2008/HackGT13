@@ -1,8 +1,10 @@
 import subprocess
+from pathlib import Path
 
 import pytest
 
 import datasets
+import repro
 from dsl import Operation, Spec
 
 TITANIC = (
@@ -66,3 +68,66 @@ def test_unknown_mention_is_not_found() -> None:
     result = datasets.resolve("No public table is named.", [SURVIVED], search=lambda _query: [])
     assert result["resolution"] == "not_found"
     assert result["dataset_slug"] == ""
+
+
+def test_same_slug_downloads_once(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("RUN_DB", str(tmp_path / "datasets.sqlite"))
+    slug = "yasserh/titanic-dataset"
+    calls: list[tuple[str, str]] = []
+
+    def fake_download(slug_arg: str, file_name: str) -> Path:
+        calls.append((slug_arg, file_name))
+        table = tmp_path / "Titanic-Dataset.csv"
+        table.write_text("Survived\n1\n0\n", encoding="utf-8")
+        return table
+
+    first = datasets.acquire_table(slug, "", find=lambda *_args: None, download=fake_download)
+    second = datasets.acquire_table(slug, "", find=lambda *_args: None, download=fake_download)
+    assert first is not None and second is not None
+    assert first == second
+    assert calls == [(slug, "")]
+
+
+def test_missing_cached_file_redownloads(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("RUN_DB", str(tmp_path / "datasets.sqlite"))
+    slug = "demo/rebuild"
+    stale = tmp_path / "gone.csv"
+    stale.write_text("x\n1\n", encoding="utf-8")
+    datasets.remember_table(slug, stale)
+    stale.unlink()
+    calls: list[int] = []
+
+    def fake_download(_slug: str, _file_name: str) -> Path:
+        calls.append(1)
+        replacement = tmp_path / "fresh.csv"
+        replacement.write_text("x\n2\n", encoding="utf-8")
+        return replacement
+
+    path = datasets.acquire_table(slug, "", find=lambda *_args: None, download=fake_download)
+    assert path is not None
+    assert path.name == "fresh.csv"
+    assert calls == [1]
+
+
+def test_failed_download_is_not_cached(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("RUN_DB", str(tmp_path / "datasets.sqlite"))
+    slug = "demo/missing"
+
+    path = datasets.acquire_table(slug, "", find=lambda *_args: None, download=lambda *_args: None)
+    assert path is None
+    assert datasets.lookup_table(slug) is None
+
+
+def test_acquire_table_uses_find_before_download(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("RUN_DB", str(tmp_path / "datasets.sqlite"))
+    slug = "yasserh/titanic-dataset"
+    table = tmp_path / "Titanic-Dataset.csv"
+    table.write_text("Survived\n1\n", encoding="utf-8")
+    monkeypatch.setattr(repro, "DOWNLOADS", tmp_path)
+
+    def boom(*_args: object, **_kwargs: object) -> None:
+        raise AssertionError("download should not run when find_table succeeds")
+
+    path = datasets.acquire_table(slug, "", find=repro.find_table, download=boom)
+    assert path == table
+    assert datasets.lookup_table(slug) == table

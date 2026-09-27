@@ -6,6 +6,8 @@ import hashlib
 import json
 import os
 import re
+import threading
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
 from difflib import SequenceMatcher
 from typing import Any
@@ -22,20 +24,79 @@ WEAK_SCORE = 0.5
 UNRESOLVED_REASON = "The reference could not be independently resolved in the catalogs searched."
 
 
+_transport_lock = threading.Lock()
+_error_retried: set[str] = set()
+_cite_locks_guard = threading.Lock()
+_cite_locks: dict[str, threading.Lock] = {}
+
+
 def lookup(query: str, entry: dict[str, Any], transport: httpx.BaseTransport | None = None) -> dict[str, Any]:
+    cite_key = _citation_cache_key(entry)
+    with _cite_lock(cite_key):
+        return _lookup_with_citation_key(query, entry, transport, cite_key)
+
+
+def _cite_lock(cite_key: str) -> threading.Lock:
+    with _cite_locks_guard:
+        lock = _cite_locks.get(cite_key)
+        if lock is None:
+            lock = threading.Lock()
+            _cite_locks[cite_key] = lock
+        return lock
+
+
+def _lookup_with_citation_key(
+    query: str,
+    entry: dict[str, Any],
+    transport: httpx.BaseTransport | None,
+    cite_key: str,
+) -> dict[str, Any]:
+    cite_cached = _read_citation_cache(cite_key)
+    if cite_cached is not None:
+        payload, is_error = cite_cached
+        if is_error:
+            if cite_key in _error_retried:
+                return {"reference": query, "queried": list(payload.get("queried") or [])}
+            _error_retried.add(cite_key)
+        else:
+            return {"reference": query, "queried": list(payload.get("queried") or [])}
+
     key = _cache_key(query)
     cached = _read_cache(key)
     if cached is not None:
         return cached
-    queried = [
-        _ask("crossref", _crossref_url(query), _crossref_candidates, entry, transport),
-        _ask("openalex", _openalex_url(query), _openalex_candidates, entry, transport),
-        _ask("semantic_scholar", _s2_url(query), _s2_candidates, entry, transport),
-    ]
+
+    queried = _query_catalogs(query, entry, transport)
     catalog = {"reference": query, "queried": queried}
-    if all(item["status"] != "error" for item in queried):
+    all_errors = all(item["status"] == "error" for item in queried)
+    if all_errors:
+        _write_citation_cache(cite_key, catalog, is_error=True)
+    else:
+        _write_citation_cache(cite_key, catalog, is_error=False)
         _write_cache(key, catalog)
     return catalog
+
+
+def _query_catalogs(
+    query: str,
+    entry: dict[str, Any],
+    transport: httpx.BaseTransport | None,
+) -> list[dict[str, Any]]:
+    jobs = (
+        ("crossref", _crossref_url(query), _crossref_candidates),
+        ("openalex", _openalex_url(query), _openalex_candidates),
+        ("semantic_scholar", _s2_url(query), _s2_candidates),
+    )
+    results: dict[str, dict[str, Any]] = {}
+    with ThreadPoolExecutor(max_workers=3) as pool:
+        futures = {
+            pool.submit(_ask, name, url, parse, entry, transport): name
+            for name, url, parse in jobs
+        }
+        for future in as_completed(futures):
+            name = futures[future]
+            results[name] = future.result()
+    return [results[name] for name, _, _ in jobs]
 
 
 def decide(claim: dict[str, Any], catalog: dict[str, Any]) -> tuple[str, float, str]:
@@ -83,7 +144,11 @@ def _ask(
 ) -> dict[str, Any]:
     try:
         with httpx.Client(transport=transport, timeout=TIMEOUT, headers={"User-Agent": USER_AGENT}) as client:
-            response = client.get(url)
+            if transport is not None:
+                with _transport_lock:
+                    response = client.get(url)
+            else:
+                response = client.get(url)
     except httpx.RequestError:
         return _row(name, "error", "", "", 0.0)
     if response.status_code != 200:
@@ -250,6 +315,81 @@ def _plain(value: str) -> str:
     return " ".join(re.sub(r"[^a-z0-9]+", " ", value.lower()).split())
 
 
+
+def _citation_cache_key(entry: dict[str, Any]) -> str:
+    doi = _doi(str(entry.get("doi") or ""))
+    if doi:
+        return f"doi:{doi}"
+    title = _plain(str(entry.get("title") or ""))
+    authors = "|".join(sorted(_plain(str(name)) for name in entry.get("authors") or [] if str(name).strip()))
+    year = str(entry.get("year") or "").strip()
+    material = f"v1\n{title}\n{authors}\n{year}"
+    return hashlib.sha256(material.encode()).hexdigest()
+
+
+def _best_citation_fields(catalog: dict[str, Any]) -> tuple[str, str, str]:
+    queried = list(catalog.get("queried") or [])
+    if not queried:
+        return "no_match", "", ""
+    best = max(queried, key=lambda item: float(item.get("score") or 0))
+    return (
+        str(best.get("status") or "no_match"),
+        str(best.get("candidate_title") or ""),
+        str(best.get("doi") or ""),
+    )
+
+
+def _read_citation_cache(key: str) -> tuple[dict[str, Any], bool] | None:
+    conn = _connect()
+    try:
+        row = conn.execute(
+            "SELECT status, candidate_title, doi, payload_json, is_error FROM citation_cache WHERE cache_key = ?",
+            (key,),
+        ).fetchone()
+    finally:
+        conn.close()
+    if row is None:
+        return None
+    payload = json.loads(row["payload_json"])
+    if not isinstance(payload, dict):
+        return None
+    return payload, bool(row["is_error"])
+
+
+def _write_citation_cache(key: str, catalog: dict[str, Any], *, is_error: bool) -> None:
+    status, candidate_title, doi = _best_citation_fields(catalog)
+    conn = _connect()
+    try:
+        conn.execute(
+            """
+            INSERT INTO citation_cache (
+                cache_key, status, candidate_title, doi, payload_json, is_error, created_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(cache_key) DO UPDATE SET
+                status = excluded.status,
+                candidate_title = excluded.candidate_title,
+                doi = excluded.doi,
+                payload_json = excluded.payload_json,
+                is_error = excluded.is_error,
+                created_at = excluded.created_at
+            """,
+            (
+                key,
+                status,
+                candidate_title,
+                doi,
+                json.dumps({"queried": catalog.get("queried") or []}),
+                1 if is_error else 0,
+                datetime.now(timezone.utc).isoformat(),
+            ),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+
 def _cache_key(query: str) -> str:
     # v2: scores depend on the bibliography title, so older zero-score rows are not reused.
     return hashlib.sha256(f"v2\n{_plain(query)}".encode()).hexdigest()
@@ -292,6 +432,19 @@ def _connect():
         CREATE TABLE IF NOT EXISTS catalog_cache (
             cache_key TEXT PRIMARY KEY,
             payload_json TEXT NOT NULL,
+            created_at TEXT NOT NULL
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS citation_cache (
+            cache_key TEXT PRIMARY KEY,
+            status TEXT NOT NULL,
+            candidate_title TEXT NOT NULL,
+            doi TEXT NOT NULL,
+            payload_json TEXT NOT NULL,
+            is_error INTEGER NOT NULL DEFAULT 0,
             created_at TEXT NOT NULL
         )
         """

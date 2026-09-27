@@ -14,6 +14,7 @@ import subprocess
 import sys
 import threading
 import zipfile
+from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 from typing import Any
 from uuid import uuid4
 
@@ -21,7 +22,16 @@ import paper_audit
 import voice
 import repro
 import shelf
-from models import DeskClaim, is_finding
+from dataclasses import asdict
+
+from models import (
+    ConferenceProgress,
+    DeskClaim,
+    PaperProgress,
+    ThroughputMetrics,
+    deterministic_final,
+    is_finding,
+)
 from batches import (
     LOCAL_PAPERS,
     BatchError,
@@ -576,8 +586,7 @@ def delete_conference(conference_id: str, owner: str | None = None) -> dict[str,
     if conference_id == DEMO_CONFERENCE_ID:
         raise BatchError(409, "this list stays")
     with _ACTIVE_LOCK:
-        if conference_id in _ACTIVE:
-            raise BatchError(409, "this list is still being read")
+        _ACTIVE.discard(conference_id)
     with _db() as conn:
         _ensure_desk(conn)
         row = conn.execute(
@@ -665,8 +674,18 @@ def start_run(conference_id: str, cap: int | None) -> dict[str, Any]:
     return {"started": True, "running": True, "cap": cap}
 
 
+def _desk_workers() -> int:
+    raw = os.environ.get("DESK_WORKERS", "2")
+    try:
+        count = int(raw)
+    except ValueError:
+        count = 2
+    return max(1, min(8, count))
+
+
 def _drain(conference_id: str, cap: int | None) -> None:
     try:
+        workers = _desk_workers()
         with _db() as conn:
             _ensure_desk(conn)
             query = """
@@ -681,8 +700,27 @@ def _drain(conference_id: str, cap: int | None) -> None:
                 query += " LIMIT ?"
                 params.append(cap)
             job_ids = [row["job_id"] for row in conn.execute(query, params)]
-        for job_id in job_ids:
-            _audit_job(job_id)
+        next_index = 0
+        pending: dict[Any, str] = {}
+        with ThreadPoolExecutor(max_workers=workers) as pool:
+            while next_index < len(job_ids) or pending:
+                with _ACTIVE_LOCK:
+                    if conference_id not in _ACTIVE:
+                        break
+                while len(pending) < workers and next_index < len(job_ids):
+                    with _ACTIVE_LOCK:
+                        if conference_id not in _ACTIVE:
+                            break
+                    job_id = job_ids[next_index]
+                    next_index += 1
+                    future = pool.submit(_audit_job, job_id)
+                    pending[future] = job_id
+                if not pending:
+                    break
+                done, _ = wait(set(pending), timeout=0.05, return_when=FIRST_COMPLETED)
+                for future in done:
+                    pending.pop(future, None)
+                    future.result()
     finally:
         with _ACTIVE_LOCK:
             _ACTIVE.discard(conference_id)
@@ -945,6 +983,339 @@ def _finish_error(job_id: str, detail: str) -> None:
         conn.commit()
 
 
+
+_CHECK_SPECIALISTS = frozenset(
+    {"evidence", "citations", "numbers", "tables", "dataset", "reproduce"}
+)
+_DONE_STATUSES = frozenset({"passed", "contradicted", "error"})
+_SETTLED_VERDICTS = frozenset(
+    {
+        "supported",
+        "contradicted",
+        "unresolved",
+        "reproduced",
+        "could_not_reproduce",
+        "insufficient_evidence",
+        "not_mentioned",
+        "ambiguous",
+    }
+)
+
+
+def _events_for_job(conn: Any, job_id: str) -> list[Any]:
+    return _events_for_jobs(conn, [job_id])
+
+
+def _event_finished(events: list[Any], specialist: str) -> bool:
+    return any(row["specialist"] == specialist and row["state"] == "finished" for row in events)
+
+
+def _event_started(events: list[Any], specialist: str) -> bool:
+    return any(row["specialist"] == specialist and row["state"] == "started" for row in events)
+
+
+def _claim_steps(claim: dict[str, Any]) -> list[str]:
+    return [str(step) for step in (claim.get("steps") or [])]
+
+
+def _claims_done(claims: list[dict[str, Any]]) -> int:
+    done = 0
+    for claim in claims:
+        verdict = str(claim.get("verdict") or "")
+        if verdict in _SETTLED_VERDICTS or deterministic_final(claim):
+            done += 1
+    return done
+
+
+def _lya_done_count(claims: list[dict[str, Any]]) -> int:
+    return sum(1 for claim in claims if "Lya verdict" in _claim_steps(claim))
+
+
+def _jev_running_count(claims: list[dict[str, Any]], *, specialist: str) -> int:
+    if specialist != "verify":
+        return 0
+    running = 0
+    for claim in claims:
+        steps = _claim_steps(claim)
+        if any(step.startswith("Jev requested") for step in steps) and "Jev judgment" not in steps:
+            running += 1
+    return running
+
+
+def _paper_phase(
+    *,
+    status: str,
+    specialist: str,
+    claims: list[dict[str, Any]],
+    events: list[Any],
+) -> str:
+    if status in _DONE_STATUSES:
+        return "done"
+    if not _event_finished(events, "claims"):
+        return "parse"
+    if not all(_event_finished(events, name) for name in _CHECK_SPECIALISTS):
+        return "checks"
+    if not _event_started(events, "verify"):
+        return "checks"
+    if _jev_running_count(claims, specialist=specialist) > 0:
+        return "jev"
+    pending_lya = any(
+        str(claim.get("claim_type") or "") in {"numerical", "numerical_comparison", "semantic"}
+        and not deterministic_final(claim)
+        and "Lya verdict" not in _claim_steps(claim)
+        and "Jev judgment" not in _claim_steps(claim)
+        for claim in claims
+    )
+    if pending_lya or specialist == "verify":
+        return "lya"
+    return "checks"
+
+
+def paper_progress(conn: Any, job: Any, claims: list[dict[str, Any]]) -> dict[str, Any]:
+    events = _events_for_job(conn, job["job_id"])
+    status = str(job["status"] or "")
+    specialist = str(job["specialist"] or "")
+    parsed = _event_finished(events, "claims") or bool(claims)
+    progress = PaperProgress(
+        parsed=parsed,
+        claims_total=len(claims),
+        claims_done=_claims_done(claims),
+        findings_so_far=sum(1 for claim in claims if is_finding(claim)),
+        lya_done=_lya_done_count(claims),
+        jev_running=_jev_running_count(claims, specialist=specialist),
+        phase=_paper_phase(
+            status=status,
+            specialist=specialist,
+            claims=claims,
+            events=events,
+        ),
+    )
+    return asdict(progress)
+
+
+def conference_progress(conn: Any, jobs: list[Any]) -> dict[str, Any]:
+    papers_total = len(jobs)
+    papers_done = 0
+    papers_with_findings = 0
+    papers_running = 0
+    papers_queued = 0
+    for job in jobs:
+        status = str(job["status"] or "")
+        if status in _DONE_STATUSES:
+            papers_done += 1
+            claims = _claims_for_job(conn, job["job_id"])
+            issues = _issues_for_jobs(conn, [job["job_id"]])
+            if finding_count(claims, issues) > 0 or int(job["issue_count"] or 0) > 0:
+                papers_with_findings += 1
+        elif status == "running":
+            papers_running += 1
+            claims = _claims_for_job(conn, job["job_id"])
+            if any(is_finding(claim) for claim in claims):
+                papers_with_findings += 1
+        elif status == "queued":
+            papers_queued += 1
+    progress = ConferenceProgress(
+        papers_total=papers_total,
+        papers_done=papers_done,
+        papers_with_findings=papers_with_findings,
+        papers_running=papers_running,
+        papers_queued=papers_queued,
+    )
+    return asdict(progress)
+
+
+def _parse_ts(value: str | None) -> float | None:
+    if not value:
+        return None
+    from datetime import datetime
+
+    cleaned = str(value).replace("Z", "+00:00")
+    try:
+        return datetime.fromisoformat(cleaned).timestamp()
+    except ValueError:
+        return None
+
+
+def _conference_job_ids(conn: Any, conference_id: str) -> list[str]:
+    rows = conn.execute(
+        """
+        SELECT paper_jobs.job_id
+        FROM paper_jobs
+        JOIN batches ON batches.batch_id = paper_jobs.batch_id
+        WHERE batches.conference_id = ?
+        ORDER BY paper_jobs.position ASC
+        """,
+        (conference_id,),
+    ).fetchall()
+    return [str(row["job_id"]) for row in rows]
+
+
+def _metrics_from_claim_row(row: Any) -> tuple[int, int, int, int | None]:
+    comp = json.loads(row["computation_json"]) if row["computation_json"] else None
+    steps = json.loads(row["steps_json"] or "[]")
+    step_text = [str(step) for step in steps]
+    payload = {"verdict": row["verdict"], "steps": step_text, "computation": comp}
+    if deterministic_final(payload):
+        return 1, 0, 0, None
+    if "Jev judgment" in step_text:
+        return 0, 0, 1, int(row["rounds"] or 0)
+    if "Lya verdict" in step_text:
+        return 0, 1, 0, None
+    return 0, 0, 0, None
+
+
+def conference_metrics(conference_id: str) -> dict[str, Any]:
+    with _db() as conn:
+        _ensure_desk(conn)
+        row = conn.execute(
+            "SELECT conference_id FROM conferences WHERE conference_id = ?",
+            (conference_id,),
+        ).fetchone()
+        if row is None:
+            raise BatchError(404, "conference not found")
+        job_ids = _conference_job_ids(conn, conference_id)
+        papers = len(job_ids)
+        if not job_ids:
+            return asdict(
+                ThroughputMetrics(
+                    conference_id=conference_id,
+                    papers=0,
+                    claims=0,
+                    resolved_deterministic=0,
+                    resolved_lya=0,
+                    escalated_jev=0,
+                    avg_jev_rounds=0,
+                    citation_cache_hits=0,
+                    citation_cache_misses=0,
+                    paper_cache_hits=0,
+                    paper_cache_misses=0,
+                    lya_batches=0,
+                    claims_per_lya_batch=0,
+                    time_to_first_finding_ms=None,
+                    median_paper_ms=None,
+                )
+            )
+
+        placeholders = ",".join("?" for _ in job_ids)
+        claim_rows = conn.execute(
+            f"SELECT steps_json, rounds, verdict, computation_json FROM paper_claims WHERE job_id IN ({placeholders})",
+            job_ids,
+        ).fetchall()
+        claims = len(claim_rows)
+        resolved_deterministic = 0
+        resolved_lya = 0
+        escalated_jev = 0
+        jev_rounds: list[int] = []
+        for row in claim_rows:
+            det, lya, jev, rounds = _metrics_from_claim_row(row)
+            resolved_deterministic += det
+            resolved_lya += lya
+            escalated_jev += jev
+            if rounds is not None:
+                jev_rounds.append(rounds)
+        avg_jev_rounds = sum(jev_rounds) / len(jev_rounds) if jev_rounds else 0
+
+        citation_cache_hits = 0
+        citation_cache_misses = 0
+        paper_cache_hits = 0
+        paper_cache_misses = 0
+
+        lya_batches = sum(
+            1
+            for event in conn.execute(
+                f"""
+                SELECT job_events.detail
+                FROM job_events
+                JOIN paper_jobs ON paper_jobs.job_id = job_events.job_id
+                JOIN batches ON batches.batch_id = paper_jobs.batch_id
+                WHERE batches.conference_id = ? AND job_events.specialist = 'verify'
+                """,
+                (conference_id,),
+            ).fetchall()
+            if event["detail"]
+        )
+
+        claims_per_lya_batch = 0
+        if lya_batches:
+            claims_per_lya_batch = resolved_lya / lya_batches if resolved_lya else 0
+
+        event_rows = conn.execute(
+            """
+            SELECT job_events.created_at, job_events.job_id, paper_jobs.status
+            FROM job_events
+            JOIN paper_jobs ON paper_jobs.job_id = job_events.job_id
+            JOIN batches ON batches.batch_id = paper_jobs.batch_id
+            WHERE batches.conference_id = ?
+            ORDER BY job_events.created_at ASC
+            """,
+            (conference_id,),
+        ).fetchall()
+        run_start: float | None = None
+        for event in event_rows:
+            ts = _parse_ts(event["created_at"])
+            if ts is not None:
+                run_start = ts if run_start is None else min(run_start, ts)
+
+        first_finding_ms: int | None = None
+        if run_start is not None:
+            for row in claim_rows:
+                steps = json.loads(row["steps_json"] or "[]")
+                comp = json.loads(row["computation_json"]) if row["computation_json"] else None
+                payload = {
+                    "verdict": row["verdict"],
+                    "steps": [str(step) for step in steps],
+                    "computation": comp,
+                    "confidence": 0,
+                    "claim_type": "numerical",
+                }
+                if is_finding(payload):
+                    first_finding_ms = 0
+                    break
+
+        finished_ms: list[int] = []
+        per_job_start: dict[str, float] = {}
+        per_job_end: dict[str, float] = {}
+        for event in event_rows:
+            job_id = str(event["job_id"])
+            ts = _parse_ts(event["created_at"])
+            if ts is None:
+                continue
+            per_job_start.setdefault(job_id, ts)
+            per_job_end[job_id] = ts
+        for job_id in job_ids:
+            start = per_job_start.get(job_id)
+            end = per_job_end.get(job_id)
+            status_row = conn.execute(
+                "SELECT status FROM paper_jobs WHERE job_id = ?", (job_id,)
+            ).fetchone()
+            if start is not None and end is not None and status_row and status_row["status"] in _DONE_STATUSES:
+                finished_ms.append(max(0, int((end - start) * 1000)))
+        median_paper_ms = None
+        if finished_ms:
+            ordered = sorted(finished_ms)
+            median_paper_ms = ordered[len(ordered) // 2]
+
+        return asdict(
+            ThroughputMetrics(
+                conference_id=conference_id,
+                papers=papers,
+                claims=claims,
+                resolved_deterministic=resolved_deterministic,
+                resolved_lya=resolved_lya,
+                escalated_jev=escalated_jev,
+                avg_jev_rounds=avg_jev_rounds,
+                citation_cache_hits=citation_cache_hits,
+                citation_cache_misses=citation_cache_misses,
+                paper_cache_hits=paper_cache_hits,
+                paper_cache_misses=paper_cache_misses,
+                lya_batches=lya_batches,
+                claims_per_lya_batch=claims_per_lya_batch,
+                time_to_first_finding_ms=first_finding_ms,
+                median_paper_ms=median_paper_ms,
+            )
+        )
+
+
 def conference_desk(conference_id: str) -> dict[str, Any]:
     with _db() as conn:
         _ensure_desk(conn)
@@ -969,6 +1340,7 @@ def conference_desk(conference_id: str) -> dict[str, Any]:
             "name": row["name"],
             "contact_email": row["contact_email"],
             "running": conference_id in _ACTIVE,
+            "progress": conference_progress(conn, jobs),
             "papers": [_paper_dict(conn, job) for job in jobs],
         }
 
@@ -1041,6 +1413,7 @@ def _paper_dict(conn: Any, job: Any) -> dict[str, Any]:
         "summary": summarize_claims(claims),
         "events": _events_for_jobs(conn, [job["job_id"]]),
         "kaggle": kaggle,
+        "progress": paper_progress(conn, job, claims),
     }
 
 

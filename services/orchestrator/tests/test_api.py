@@ -1,5 +1,6 @@
 from fastapi.testclient import TestClient
 
+import voice
 from app import app
 
 
@@ -131,12 +132,26 @@ def test_get_playbook_returns_live_patches(tmp_path, monkeypatch):
     )
 
 
-def test_voice_token_returns_501(tmp_path, monkeypatch):
+def test_voice_token_without_a_key_is_unavailable(tmp_path, monkeypatch):
+    monkeypatch.delenv("XAI_API_KEY", raising=False)
     client = _client(tmp_path, monkeypatch)
 
     response = client.post("/voice/token")
 
-    assert response.status_code == 501
+    assert response.status_code == 503
+    assert "XAI_API_KEY" not in response.text
+
+
+def test_voice_token_returns_the_client_secret(tmp_path, monkeypatch):
+    monkeypatch.setenv("XAI_API_KEY", "test-xai-key")
+    monkeypatch.setattr(voice, "client_secret", lambda: {"value": "ephemeral", "expires_at": 10})
+    client = _client(tmp_path, monkeypatch)
+
+    response = client.post("/voice/token")
+
+    assert response.status_code == 200
+    assert response.json() == {"value": "ephemeral", "expires_at": 10}
+    assert "test-xai-key" not in response.text
 
 
 def test_cors_allows_localhost_3000(tmp_path, monkeypatch):

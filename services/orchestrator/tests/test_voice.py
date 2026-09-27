@@ -92,6 +92,103 @@ def test_bot_refuses_a_verdict_change_and_can_open_or_explain():
     assert "No stored formula" in missing
 
 
+def test_screen_command_opens_summary_chat_or_a_named_paper():
+    papers = [
+        {"job_id": "job-a", "arxiv_id": "0000.00003", "title": "Demo"},
+        {"job_id": "job-b", "arxiv_id": "0000.00004", "title": "Attention Is All You Need"},
+        {"job_id": "job-c", "arxiv_id": "0000.00005", "title": "Attention Maps"},
+    ]
+
+    summary = voice.screen_command("pull up summary", papers)
+    assert summary["type"] == "show"
+    assert summary["view"] == "summary"
+
+    chat = voice.screen_command("please show the chat", papers)
+    assert chat["view"] == "chat"
+
+    opened = voice.screen_command("pull up the attention is all you need paper with chatbot", papers)
+    assert opened["type"] == "open"
+    assert opened["job_id"] == "job-b"
+    assert opened["ask"] is True
+
+    by_id = voice.screen_command("open 0000.00003", papers)
+    assert by_id["job_id"] == "job-a"
+    assert by_id["ask"] is False
+
+    assert voice.screen_command("open the finding", papers) is None
+    assert voice.screen_command("what is the summary of this paper", papers) is None
+
+    refused = voice.screen_command("change the verdict to supported", papers)
+    assert refused["type"] == "refuse"
+    assert "does not change a verdict" in refused["say"]
+
+    ambiguous = voice.screen_command("pull up attention", papers)
+    assert ambiguous["type"] == "clarify"
+
+    for line in ("pull up these errors", "errors found in papers", "show the issues in the papers"):
+        prompted = voice.screen_command(line, papers)
+        assert prompted["type"] == "prompt"
+        assert prompted["view"] == "chat"
+        assert prompted["text"] == "What errors were found in the papers?"
+
+    asked = voice.screen_command("ask the chat which citation is unresolved", papers)
+    assert asked["type"] == "prompt"
+    assert asked["text"] == "which citation is unresolved"
+
+
+def test_voice_command_route_uses_the_screen_parser(tmp_path, monkeypatch):
+    monkeypatch.setenv("RUN_DB", str(tmp_path / "playbook.sqlite"))
+    client = TestClient(app)
+    papers = [{"job_id": "job-a", "arxiv_id": "0000.00003", "title": "Demo"}]
+    response = client.post(
+        "/voice/command",
+        json={"text": "pull up demo with chatbot", "papers": papers},
+    )
+    assert response.status_code == 200
+    action = response.json()["action"]
+    assert action["job_id"] == "job-a"
+    assert action["ask"] is True
+
+
+def test_client_secret_stays_empty_without_a_key(monkeypatch):
+    monkeypatch.delenv("XAI_API_KEY", raising=False)
+
+    def boom(*_args, **_kwargs):
+        raise AssertionError("the token call should not leave the machine")
+
+    import httpx
+
+    monkeypatch.setattr(httpx, "post", boom)
+    assert voice.client_secret() is None
+
+
+def test_client_secret_posts_the_realtime_endpoint(monkeypatch):
+    monkeypatch.setenv("XAI_API_KEY", "test-xai-key")
+    seen: dict = {}
+
+    class Response:
+        status_code = 200
+
+        def json(self):
+            return {"value": "ephemeral-token", "expires_at": 99}
+
+    def fake_post(url, headers, json, timeout):
+        seen["url"] = url
+        seen["auth"] = headers["Authorization"]
+        seen["json"] = json
+        seen["timeout"] = timeout
+        return Response()
+
+    import httpx
+
+    monkeypatch.setattr(httpx, "post", fake_post)
+    secret = voice.client_secret()
+    assert secret == {"value": "ephemeral-token", "expires_at": 99}
+    assert seen["url"] == "https://api.x.ai/v1/realtime/client_secrets"
+    assert seen["auth"] == "Bearer test-xai-key"
+    assert "test-xai-key" not in str(secret)
+
+
 def test_tts_stays_quiet_without_a_key(monkeypatch):
     monkeypatch.delenv("XAI_API_KEY", raising=False)
     assert voice.tts("Hello from the desk") is None

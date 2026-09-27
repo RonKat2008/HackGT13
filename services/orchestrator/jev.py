@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import hashlib
+import json
 import os
+from datetime import datetime, timezone
 from typing import Any
 
 import httpx
@@ -42,6 +45,13 @@ def jev_calls_left(calls_so_far: int, cap: int = DEFAULT_CAP) -> bool:
     return calls_so_far < cap
 
 
+def cache_key(claim_text: str, source_text: str) -> str:
+    claim_hash = hashlib.sha256(claim_text.encode()).hexdigest()
+    evidence_hash = hashlib.sha256(source_text.encode()).hexdigest()
+    body = f"{claim_hash}\n{evidence_hash}\n{JEV_MODEL}"
+    return hashlib.sha256(body.encode()).hexdigest()
+
+
 def judge_claim(
     claim_text: str,
     source_text: str,
@@ -49,6 +59,11 @@ def judge_claim(
     api_key: str | None = None,
 ) -> dict:
     key = api_key if api_key is not None else os.environ.get("OPENROUTER_API_KEY", "")
+    key_hash = cache_key(claim_text, source_text)
+    cached = _read_cache(key_hash)
+    if cached is not None:
+        return cached
+
     payload = {
         "model": JEV_MODEL,
         "state": {"claim": claim_text, "source_text": source_text},
@@ -71,7 +86,14 @@ def judge_claim(
         data = response.json()
     except ValueError:
         data = {}
-    return _map_success(data)
+    result = _map_success(data)
+    _write_cache(
+        key_hash,
+        str(result["label"]),
+        float(result["confidence"]),
+        result.get("probs") if isinstance(result.get("probs"), dict) else {},
+    )
+    return result
 
 
 def _map_success(data: Any) -> dict:
@@ -113,3 +135,65 @@ def _as_confidence(value: Any) -> float | None:
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         return None
     return float(value)
+
+
+def _read_cache(key: str) -> dict[str, Any] | None:
+    conn = _connect()
+    try:
+        row = conn.execute(
+            "SELECT label, confidence, probs_json FROM jev_cache WHERE cache_key = ?",
+            (key,),
+        ).fetchone()
+    finally:
+        conn.close()
+    if row is None:
+        return None
+    try:
+        probs = json.loads(row["probs_json"])
+    except (TypeError, ValueError):
+        probs = {}
+    if not isinstance(probs, dict):
+        probs = {}
+    return {
+        "label": row["label"],
+        "confidence": float(row["confidence"]),
+        "probs": probs,
+        "not_run": False,
+    }
+
+
+def _write_cache(key: str, label: str, score: float, probs: dict[str, Any]) -> None:
+    conn = _connect()
+    try:
+        conn.execute(
+            """
+            INSERT INTO jev_cache (cache_key, label, confidence, probs_json, created_at)
+            VALUES (?, ?, ?, ?, ?)
+            ON CONFLICT(cache_key) DO UPDATE SET
+                label = excluded.label,
+                confidence = excluded.confidence,
+                probs_json = excluded.probs_json
+            """,
+            (key, label, score, json.dumps(probs), datetime.now(timezone.utc).isoformat()),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def _connect():
+    from store import connect, default_db_path
+
+    conn = connect(default_db_path())
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS jev_cache (
+            cache_key TEXT PRIMARY KEY,
+            label TEXT NOT NULL,
+            confidence REAL NOT NULL,
+            probs_json TEXT NOT NULL DEFAULT '{}',
+            created_at TEXT NOT NULL
+        )
+        """
+    )
+    return conn

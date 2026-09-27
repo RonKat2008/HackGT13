@@ -1,4 +1,6 @@
+from dataclasses import dataclass
 from enum import StrEnum
+from typing import Literal
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -281,3 +283,51 @@ class Run(StrictModel):
     playbook_loaded: list[Patch]
     playbook_patches: list[Patch]
     budget: Budget
+
+
+# Throughput contract. See docs/plan-throughput.md. Field names freeze here.
+
+PAPER_PHASES = ("parse", "checks", "lya", "jev", "done")
+
+
+@dataclass(frozen=True)
+class PaperProgress:
+    parsed: bool
+    claims_total: int
+    claims_done: int
+    findings_so_far: int
+    lya_done: int
+    jev_running: int
+    phase: Literal["parse", "checks", "lya", "jev", "done"]
+
+    def __post_init__(self) -> None:
+        if self.phase not in PAPER_PHASES:
+            raise ValueError("phase must be parse, checks, lya, jev, or done")
+
+
+@dataclass(frozen=True)
+class ConferenceProgress:
+    papers_total: int
+    papers_done: int
+    papers_with_findings: int
+    papers_running: int
+    papers_queued: int
+
+
+@dataclass(frozen=True)
+class ThroughputMetrics:
+    conference_id: str
+    papers: int
+    claims: int
+    resolved_deterministic: int
+    resolved_lya: int
+    escalated_jev: int
+    avg_jev_rounds: float | int
+    citation_cache_hits: int
+    citation_cache_misses: int
+    paper_cache_hits: int
+    paper_cache_misses: int
+    lya_batches: int
+    claims_per_lya_batch: float | int
+    time_to_first_finding_ms: int | None
+    median_paper_ms: int | None

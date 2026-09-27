@@ -21,6 +21,11 @@ def _transport(handler) -> httpx.MockTransport:
     return httpx.MockTransport(handler)
 
 
+@pytest.fixture(autouse=True)
+def _fresh_run_db(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("RUN_DB", str(tmp_path / "jev.sqlite"))
+
+
 def test_judge_claim_maps_choice_and_score_on_200():
     def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(200, json=SUCCESS_BODY)
