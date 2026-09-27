@@ -478,3 +478,38 @@ def desk_speak(job_id: str, body: SpeakBody) -> dict:
     except BatchError as exc:
         _batch_http(exc)
 
+
+class AuthorPaperBody(BaseModel):
+    owner: str
+    arxiv_id: str | None = None
+
+
+@app.post("/author/papers")
+def author_add(body: AuthorPaperBody) -> dict:
+    from author import add_author_paper
+
+    try:
+        return add_author_paper(body.owner, arxiv_id=body.arxiv_id)
+    except BatchError as exc:
+        _batch_http(exc)
+
+
+@app.get("/author/papers")
+def author_list(owner: str = Query(default="")) -> dict:
+    from author import list_author_papers
+
+    try:
+        return list_author_papers(owner)
+    except BatchError as exc:
+        _batch_http(exc)
+
+
+@app.get("/author/papers/{job_id}")
+def author_paper(job_id: str) -> dict:
+    from author import get_author_paper
+
+    try:
+        return get_author_paper(job_id)
+    except BatchError as exc:
+        _batch_http(exc)
+
