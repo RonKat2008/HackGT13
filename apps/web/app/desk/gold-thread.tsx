@@ -17,7 +17,7 @@ export function GoldThread({ from }: { from: HTMLElement | null }) {
       }
       const band = [...document.querySelectorAll(".pdf-band")].find((node) => {
         const rect = node.getBoundingClientRect();
-        return rect.width > 2 && rect.height > 2;
+        return rect.width > 2 && rect.height >= 1;
       });
       const panel = document.getElementById("cited-passage");
       const target = band ?? panel;
@@ -27,7 +27,7 @@ export function GoldThread({ from }: { from: HTMLElement | null }) {
       }
       const start = from.getBoundingClientRect();
       const end = target.getBoundingClientRect();
-      if (end.width < 2 || end.height < 2) {
+      if (end.width < 2 || end.height < 1) {
         setPath("");
         return;
       }

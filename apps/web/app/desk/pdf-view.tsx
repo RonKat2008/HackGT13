@@ -234,19 +234,34 @@ function placeOnPage(pageEl: HTMLElement, needle: string, role: string, span: nu
   range.setStart(nodes[at].node, nodes[at].offset);
   range.setEnd(last.node, last.offset + 1);
   const pageRect = pageEl.getBoundingClientRect();
-  let placed = false;
-  for (const rect of range.getClientRects()) {
-    if (rect.width < 0.5 || rect.height < 0.5) continue;
+  const lines = underlineLines(range);
+  if (!lines.length) return false;
+  for (const line of lines) {
     const mark = document.createElement("div");
     mark.className = role === "contradicts" ? "pdf-band pdf-band-contradicts" : "pdf-band";
     mark.dataset.role = role;
     mark.dataset.quote = needle.slice(0, 24);
-    mark.style.left = `${rect.left - pageRect.left}px`;
-    mark.style.top = `${rect.top - pageRect.top}px`;
-    mark.style.width = `${rect.width}px`;
-    mark.style.height = `${rect.height}px`;
+    mark.style.left = `${line.left - pageRect.left}px`;
+    mark.style.width = `${line.right - line.left}px`;
+    mark.style.top = `${line.bottom - pageRect.top}px`;
+    mark.style.height = "1.5px";
     pageEl.appendChild(mark);
-    placed = true;
   }
-  return placed;
+  return true;
+}
+
+function underlineLines(range: Range): { left: number; right: number; bottom: number }[] {
+  const rects = [...range.getClientRects()].filter((rect) => rect.width >= 0.5 && rect.height >= 0.5);
+  const lines: { top: number; left: number; right: number; bottom: number }[] = [];
+  for (const rect of rects) {
+    const line = lines.find((item) => Math.abs(item.top - rect.top) < 3);
+    if (!line) {
+      lines.push({ top: rect.top, left: rect.left, right: rect.right, bottom: rect.bottom });
+      continue;
+    }
+    line.left = Math.min(line.left, rect.left);
+    line.right = Math.max(line.right, rect.right);
+    line.bottom = Math.max(line.bottom, rect.bottom);
+  }
+  return lines;
 }
