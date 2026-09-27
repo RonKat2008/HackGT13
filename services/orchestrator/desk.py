@@ -36,6 +36,9 @@ from batches import (
 )
 
 _ARXIV_RE = re.compile(r"(\d{4}\.\d{4,5}|0000\.0000\d)")
+# One chair. This is the conference already used for the demo.
+DESK_OWNER = "00000000-0000-4000-8000-000000000001"
+DEMO_CONFERENCE_ID = "13b04c32-15d0-443b-a087-959b8016f3b8"
 _ACTIVE: set[str] = set()
 _ACTIVE_LOCK = threading.Lock()
 
@@ -135,6 +138,7 @@ def _ensure_desk(conn: Any) -> None:
         )
         """
     )
+    _ensure_one_list(conn)
     conn.commit()
 
 
@@ -186,10 +190,6 @@ def login(email: str, password: str) -> dict[str, str]:
                     "INSERT INTO users (user_id, email, password_hash, created_at) VALUES (?, ?, ?, ?)",
                     (user_id, cleaned, _hash_password(password), _now()),
                 )
-                conn.execute(
-                    "UPDATE conferences SET owner = ? WHERE owner IS NULL",
-                    (user_id,),
-                )
                 conn.commit()
                 return {"user_id": user_id, "email": cleaned}
             raise BatchError(400, "that email or password does not match")
@@ -237,20 +237,7 @@ def create_user_conference(owner: str, name: str, contact_email: str) -> dict[st
         user = conn.execute("SELECT 1 FROM users WHERE user_id = ?", (owner,)).fetchone()
         if user is None:
             raise BatchError(404, "account not found")
-        conference_id = str(uuid4())
-        conn.execute(
-            """
-            INSERT INTO conferences (conference_id, name, contact_email, owner)
-            VALUES (?, ?, ?, ?)
-            """,
-            (conference_id, name.strip(), contact_email.strip(), owner),
-        )
-        conn.commit()
-    return {
-        "conference_id": conference_id,
-        "name": name.strip(),
-        "contact_email": contact_email.strip(),
-    }
+        raise BatchError(409, "the desk already has one list")
 
 
 def parse_arxiv_id(line: str) -> str | None:
@@ -258,16 +245,37 @@ def parse_arxiv_id(line: str) -> str | None:
     return match.group(1) if match else None
 
 
+def _ensure_one_list(conn: Any) -> None:
+    """Keep the demo conference. Do not touch its papers."""
+    row = conn.execute(
+        "SELECT owner FROM conferences WHERE conference_id = ?",
+        (DEMO_CONFERENCE_ID,),
+    ).fetchone()
+    if row is None:
+        conn.execute(
+            """
+            INSERT INTO conferences (conference_id, name, contact_email, owner)
+            VALUES (?, ?, ?, ?)
+            """,
+            (DEMO_CONFERENCE_ID, "Sohaib", "chair@arxaudit.local", DESK_OWNER),
+        )
+    elif row["owner"] != DESK_OWNER:
+        conn.execute(
+            "UPDATE conferences SET owner = ? WHERE conference_id = ?",
+            (DESK_OWNER, DEMO_CONFERENCE_ID),
+        )
+    conn.commit()
+
+
 def list_conferences(owner: str | None = None) -> list[dict[str, Any]]:
+    del owner
     with _db() as conn:
         _ensure_desk(conn)
-        if owner:
-            rows = conn.execute(
-                "SELECT * FROM conferences WHERE owner = ? ORDER BY name ASC",
-                (owner,),
-            ).fetchall()
-        else:
-            rows = conn.execute("SELECT * FROM conferences ORDER BY name ASC").fetchall()
+        _ensure_one_list(conn)
+        rows = conn.execute(
+            "SELECT * FROM conferences WHERE conference_id = ?",
+            (DEMO_CONFERENCE_ID,),
+        ).fetchall()
         listed = []
         for row in rows:
             counts = conn.execute(
@@ -540,6 +548,8 @@ def delete_submission(conference_id: str, job_id: str) -> dict[str, str]:
 
 
 def delete_conference(conference_id: str, owner: str | None = None) -> dict[str, str]:
+    if conference_id == DEMO_CONFERENCE_ID:
+        raise BatchError(409, "this list stays")
     with _ACTIVE_LOCK:
         if conference_id in _ACTIVE:
             raise BatchError(409, "this list is still being read")

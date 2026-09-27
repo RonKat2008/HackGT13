@@ -3,7 +3,7 @@ from pathlib import Path
 
 import httpx
 
-from lya import accepts, judge_claim
+from lya import accepts, evidence_text, judge_claim
 from models import TOOL_NAMES, ToolEvidence, deterministic_final, is_finding
 from verify import judge_with_lya
 
@@ -252,19 +252,93 @@ def test_demo_titanic_counts_stay_computed(tmp_path, monkeypatch) -> None:
     assert first_class["computation"]["expected"] == 317
 
 
-def test_training_jsonl_includes_the_hard_negatives() -> None:
-    rows = [
+ALLOWED_LABELS = {"supported", "contradicted", "not_mentioned", "ambiguous"}
+LYA_ROW_KEYS = {"claim", "evidence", "label"}
+
+
+def _load_lya_jsonl(name: str) -> list[dict]:
+    return [
         json.loads(line)
-        for line in (FIXTURES / "lya_train.jsonl").read_text().splitlines()
+        for line in (FIXTURES / name).read_text().splitlines()
         if line.strip()
     ]
+
+
+def _row_fingerprint(row: dict) -> tuple:
+    evidence = tuple(
+        (item.get("section"), item.get("text")) for item in row.get("evidence") or []
+    )
+    return (row.get("claim"), evidence, row.get("label"))
+
+
+def _assert_lya_rows(rows: list[dict]) -> None:
+    assert rows
+    for row in rows:
+        assert set(row.keys()) == LYA_ROW_KEYS
+        assert isinstance(row["claim"], str) and row["claim"]
+        assert isinstance(row["evidence"], list) and row["evidence"]
+        for item in row["evidence"]:
+            assert set(item.keys()) == {"section", "text"}
+            assert isinstance(item["section"], str) and item["section"]
+            assert isinstance(item["text"], str) and item["text"]
+        assert row["label"] in ALLOWED_LABELS
+
+
+def test_training_jsonl_includes_the_hard_negatives() -> None:
+    rows = _load_lya_jsonl("lya_train.jsonl")
+    _assert_lya_rows(rows)
     labels = {row["label"] for row in rows}
-    assert labels <= {"supported", "contradicted", "not_mentioned", "ambiguous"}
+    assert labels <= ALLOWED_LABELS
     claims = [row["claim"] for row in rows]
     assert any("95.2 F1" in claim for claim in claims)
     assert any("percentage points" in claim for claim in claims)
     assert any(row["evidence"][0]["section"] == "abstract" for row in rows)
     assert any("Table 2" in row["claim"] for row in rows)
+
+
+def test_train_and_holdout_jsonl_schemas_and_labels() -> None:
+    train = _load_lya_jsonl("lya_train.jsonl")
+    holdout = _load_lya_jsonl("lya_holdout.jsonl")
+    _assert_lya_rows(train)
+    _assert_lya_rows(holdout)
+    assert {row["label"] for row in train} <= ALLOWED_LABELS
+    assert {row["label"] for row in holdout} <= ALLOWED_LABELS
+
+
+def test_holdout_is_smaller_and_disjoint_from_train() -> None:
+    train = _load_lya_jsonl("lya_train.jsonl")
+    holdout = _load_lya_jsonl("lya_holdout.jsonl")
+    assert holdout
+    assert len(holdout) < len(train)
+    train_fps = {_row_fingerprint(row) for row in train}
+    for row in holdout:
+        assert _row_fingerprint(row) not in train_fps
+
+
+def test_holdout_covers_the_hard_case_kinds() -> None:
+    holdout = _load_lya_jsonl("lya_holdout.jsonl")
+    claims = [row["claim"] for row in holdout]
+    metric_pairs = (
+        ("Recall", "Precision"),
+        ("Precision", "Recall"),
+        ("Hit@10", "MRR"),
+        ("MRR", "Hit@10"),
+        ("F1", "Accuracy"),
+        ("Accuracy", "F1"),
+    )
+    assert any(
+        claim_metric in row["claim"] and evidence_metric in row["evidence"][0]["text"]
+        for row in holdout
+        for claim_metric, evidence_metric in metric_pairs
+    )
+    assert any("percentage points" in claim for claim in claims)
+    assert any(
+        row["evidence"][0]["section"] == "abstract" and row["label"] == "not_mentioned"
+        for row in holdout
+    )
+    assert any("Table" in row["claim"] for row in holdout)
+    assert any(row["label"] == "supported" for row in holdout)
+    assert any(row["label"] == "ambiguous" for row in holdout)
 
 
 def test_lya_cache_skips_a_second_identical_call(tmp_path, monkeypatch) -> None:
@@ -295,6 +369,42 @@ def test_lya_cache_skips_a_second_identical_call(tmp_path, monkeypatch) -> None:
     assert first["confidence"] == 0.95
     assert second == first
     assert hits["n"] == 1
+
+
+def test_evidence_text_keeps_the_section() -> None:
+    text = evidence_text([{"section": "abstract", "text": "Accuracy reached 95.2%."}])
+    assert text == "[abstract] Accuracy reached 95.2%."
+
+
+def test_local_model_without_weights_does_not_call_xai(monkeypatch) -> None:
+    monkeypatch.setenv("LYA_MODEL", "local")
+    monkeypatch.delenv("XAI_API_KEY", raising=False)
+
+    def boom(*_args, **_kwargs):
+        raise AssertionError("Lya must not call xAI when the local adapter is selected")
+
+    monkeypatch.setattr("httpx.Client", boom)
+    monkeypatch.setattr("lya_local.adapter_dir", lambda _model: None)
+    result = judge_claim("Accuracy reached 95.2%.", [{"section": "results", "text": "61.0%."}])
+    assert result["not_run"] is True
+
+
+def test_local_model_uses_the_adapter_text(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("LYA_MODEL", "local")
+    monkeypatch.setenv("RUN_DB", str(tmp_path / "lya.sqlite"))
+    monkeypatch.setattr("lya_local.adapter_dir", lambda _model: tmp_path)
+
+    def fake_generate(_path, _system, _user):
+        return '{"verdict": "contradicted", "confidence": 0.96}'
+
+    monkeypatch.setattr("lya_local.generate", fake_generate)
+    result = judge_claim(
+        "Accuracy reached 95.2%.",
+        [{"section": "results", "text": "The model accuracy was 61.0%."}],
+    )
+    assert result["verdict"] == "contradicted"
+    assert result["confidence"] == 0.96
+    assert result["not_run"] is False
 
 
 def test_number_lock_and_table_lock_are_final() -> None:

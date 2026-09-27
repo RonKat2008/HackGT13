@@ -1,0 +1,10 @@
+{"claim": "Recall hit 0.91 on the clinical NER task.", "evidence": [{"section": "results", "text": "Precision hit 0.91 on the clinical NER task."}], "label": "contradicted"}
+{"claim": "Accuracy improved by 4.5 percentage points after distillation.", "evidence": [{"section": "results", "text": "Accuracy improved by 4.5% after distillation."}], "label": "contradicted"}
+{"claim": "Word error rate is 6.1% on the clean test set.", "evidence": [{"section": "abstract", "text": "Word error rate is 6.1% on the clean test set."}], "label": "not_mentioned"}
+{"claim": "Table 8 lists a BLEU of 41.3 for the multilingual system.", "evidence": [{"section": "results", "text": "Table 8 lists a BLEU of 37.9 for the multilingual system."}], "label": "contradicted"}
+{"claim": "CIDEr for the captioner is 1.18 on MSCOCO.", "evidence": [{"section": "results", "text": "CIDEr for the captioner is 1.18 on MSCOCO."}], "label": "supported"}
+{"claim": "The ranking model generalizes to unseen queries.", "evidence": [{"section": "results", "text": "Gains appear on half the query buckets and are flat on the rest."}], "label": "ambiguous"}
+{"claim": "Hit@10 is 0.83 for the dual encoder.", "evidence": [{"section": "results", "text": "MRR is 0.83 for the dual encoder."}], "label": "contradicted"}
+{"claim": "Latency dropped 15 percentage points after quantization.", "evidence": [{"section": "results", "text": "Latency dropped 15% after quantization."}], "label": "contradicted"}
+{"claim": "Token-level F1 is 0.64 on the noisy OCR split.", "evidence": [{"section": "abstract", "text": "Token-level F1 is 0.64 on the noisy OCR split."}], "label": "not_mentioned"}
+{"claim": "Table 9 reports a parameter count of 110M.", "evidence": [{"section": "discussion", "text": "We describe the model as mid-sized without stating a parameter count."}], "label": "not_mentioned"}

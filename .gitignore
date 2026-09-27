@@ -27,3 +27,6 @@ playbook.sqlite
 # Kaggle pulls and fitted model binaries. auc.json and results.json stay tracked.
 kaggle/downloads/
 *.joblib
+
+# Local Lya adapter. The training rows stay tracked; the weights do not.
+services/orchestrator/lya_adapter/

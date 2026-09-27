@@ -49,7 +49,13 @@ export async function middleware(request: NextRequest) {
   if (path.startsWith("/desk") && !signedIn) {
     return carry(supabaseResponse, NextResponse.redirect(new URL("/login", request.url)));
   }
-  if ((path === "/login" || path === "/signup") && signedIn) {
+  if (path === "/signup") {
+    return carry(
+      supabaseResponse,
+      NextResponse.redirect(new URL(signedIn ? "/desk" : "/login", request.url)),
+    );
+  }
+  if (path === "/login" && signedIn) {
     return carry(supabaseResponse, NextResponse.redirect(new URL("/desk", request.url)));
   }
   return supabaseResponse;

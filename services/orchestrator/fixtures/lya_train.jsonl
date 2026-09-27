@@ -6,3 +6,33 @@
 {"claim": "Table 2 lists an accuracy of 89.2.", "evidence": [{"section": "discussion", "text": "We discuss accuracy only in general terms."}], "label": "not_mentioned"}
 {"claim": "Of the 891 passengers, 342 survived.", "evidence": [{"section": "results", "text": "COUNT of Survived equal to 1 is 342."}], "label": "supported"}
 {"claim": "317 passengers travelled in first class.", "evidence": [{"section": "results", "text": "COUNT of Pclass equal to 1 is 216."}], "label": "contradicted"}
+{"claim": "Precision was 0.87 on the held-out set.", "evidence": [{"section": "results", "text": "Recall was 0.87 on the held-out set."}], "label": "contradicted"}
+{"claim": "The detector reports an AUROC of 0.94.", "evidence": [{"section": "results", "text": "Accuracy of the detector is 0.94 on the same split."}], "label": "contradicted"}
+{"claim": "Macro-F1 equals 0.81 after fine-tuning.", "evidence": [{"section": "results", "text": "After fine-tuning, micro-F1 equals 0.81."}], "label": "contradicted"}
+{"claim": "Top-1 accuracy is 92.4% on ImageNet.", "evidence": [{"section": "results", "text": "Top-5 accuracy is 92.4% on ImageNet."}], "label": "contradicted"}
+{"claim": "BLEU rose by 3.2 percentage points versus the prior system.", "evidence": [{"section": "results", "text": "BLEU rose by 3.2% versus the prior system."}], "label": "contradicted"}
+{"claim": "Error rate fell 5 percentage points after calibration.", "evidence": [{"section": "results", "text": "Error rate fell 5% after calibration."}], "label": "contradicted"}
+{"claim": "Throughput improved by 12 percentage points on the stress suite.", "evidence": [{"section": "results", "text": "Throughput improved by 12% on the stress suite."}], "label": "contradicted"}
+{"claim": "Validation loss settled at 0.31 after 40 epochs.", "evidence": [{"section": "abstract", "text": "Validation loss settled at 0.31 after 40 epochs."}], "label": "not_mentioned"}
+{"claim": "The ensemble reaches 88.5% exact-match on TriviaQA.", "evidence": [{"section": "abstract", "text": "The ensemble reaches 88.5% exact-match on TriviaQA."}], "label": "not_mentioned"}
+{"claim": "Mean absolute error is 1.4 degrees on the weather holdout.", "evidence": [{"section": "abstract", "text": "Mean absolute error is 1.4 degrees on the weather holdout."}], "label": "not_mentioned"}
+{"claim": "Table 3 reports a latency of 42 ms.", "evidence": [{"section": "results", "text": "Latency is described as competitive but no millisecond figure appears in the prose."}], "label": "not_mentioned"}
+{"claim": "Table 1 shows a recall of 0.76 for the sparse baseline.", "evidence": [{"section": "results", "text": "Table 1 shows a recall of 0.61 for the sparse baseline."}], "label": "contradicted"}
+{"claim": "According to Table 4, FLOPs are 2.1e9 for the student model.", "evidence": [{"section": "discussion", "text": "We note the student is cheaper but do not quote FLOPs."}], "label": "not_mentioned"}
+{"claim": "Table 5 lists a false-positive rate of 0.03.", "evidence": [{"section": "results", "text": "Table 5 lists a false-positive rate of 0.11."}], "label": "contradicted"}
+{"claim": "Exact-match on SQuAD is 79.1% for our span model.", "evidence": [{"section": "results", "text": "Exact-match on SQuAD is 79.1% for our span model."}], "label": "supported"}
+{"claim": "The ablation removes 2.4 percentage points of F1 when attention is frozen.", "evidence": [{"section": "results", "text": "Freezing attention drops F1 by 2.4 percentage points."}], "label": "supported"}
+{"claim": "Rouge-L is 0.55 for the summary decoder.", "evidence": [{"section": "results", "text": "Rouge-L for the summary decoder is 0.55."}], "label": "supported"}
+{"claim": "The method is robust across domains.", "evidence": [{"section": "results", "text": "Performance varies by domain; some splits improve while others decline slightly."}], "label": "ambiguous"}
+{"claim": "Gains are significant under every seed we tried.", "evidence": [{"section": "results", "text": "Four of five seeds improve; one seed is within noise of the baseline."}], "label": "ambiguous"}
+{"claim": "Spearman correlation with human ratings is 0.72.", "evidence": [{"section": "results", "text": "Pearson correlation with human ratings is 0.72."}], "label": "contradicted"}
+{"claim": "Coverage increased by 9 percentage points after decoding changes.", "evidence": [{"section": "results", "text": "Coverage increased by 9% after decoding changes."}], "label": "contradicted"}
+{"claim": "Perplexity on WikiText-103 is 18.4.", "evidence": [{"section": "abstract", "text": "Perplexity on WikiText-103 is 18.4."}], "label": "not_mentioned"}
+{"claim": "Table 6 reports a calibration ECE of 0.02.", "evidence": [{"section": "results", "text": "The prose claims strong calibration without stating an ECE number."}], "label": "not_mentioned"}
+{"claim": "mAP at IoU 0.5 is 0.68 on the detection split.", "evidence": [{"section": "results", "text": "mAP at IoU 0.5 is 0.68 on the detection split."}], "label": "supported"}
+{"claim": "Precision is 0.88 on the clinical NER task.", "evidence": [{"section": "results", "text": "Recall is 0.88 on the clinical NER task."}], "label": "contradicted"}
+{"claim": "MRR is 0.71 for the dual encoder.", "evidence": [{"section": "results", "text": "Hit@10 is 0.71 for the dual encoder."}], "label": "contradicted"}
+{"claim": "chrF is 32.0 on the translation test set.", "evidence": [{"section": "results", "text": "BLEU is 32.0 on the translation test set."}], "label": "contradicted"}
+{"claim": "Exact match is 0.64 on the noisy OCR split.", "evidence": [{"section": "results", "text": "Token-level F1 is 0.64 on the noisy OCR split."}], "label": "contradicted"}
+{"claim": "Recall is 0.88 on the clinical NER task.", "evidence": [{"section": "results", "text": "Recall is 0.88 on the clinical NER task."}], "label": "supported"}
+{"claim": "Hit@10 is 0.71 for the dual encoder.", "evidence": [{"section": "results", "text": "Hit@10 is 0.71 for the dual encoder."}], "label": "supported"}

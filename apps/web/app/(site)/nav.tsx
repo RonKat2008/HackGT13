@@ -21,17 +21,12 @@ export async function SiteNav() {
               Open the desk
             </Link>
           ) : (
-            <>
-              <Link href="/login" className="text-[#1c1915]">
-                Sign in
-              </Link>
-              <Link
-                href="/signup"
-                className="rounded-full bg-[#1c1915] px-4 py-2 text-[#f4f0e6]"
-              >
-                Create account
-              </Link>
-            </>
+            <Link
+              href="/login"
+              className="rounded-full bg-[#1c1915] px-4 py-2 text-[#f4f0e6]"
+            >
+              Sign in
+            </Link>
           )}
         </nav>
       </div>

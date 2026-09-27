@@ -15,6 +15,10 @@ from models import LYA_VERDICTS
 CHAT_URL = "https://api.x.ai/v1/chat/completions"
 DEFAULT_MODEL = "grok-4.6"
 DEFAULT_THRESHOLD = 0.90
+SYSTEM = (
+    "Compare the claim with the evidence rows only. "
+    "Return verdict and confidence. Do not search, write code, or parse a PDF."
+)
 
 _SCHEMA = {
     "type": "json_schema",
@@ -76,9 +80,40 @@ def evidence_text(evidence: list[dict[str, Any]]) -> str:
         if not isinstance(item, dict):
             continue
         page = item.get("page")
-        prefix = f"[p.{page}] " if isinstance(page, int) else ""
+        section = str(item.get("section") or "").strip()
+        tags = []
+        if isinstance(page, int):
+            tags.append(f"p.{page}")
+        if section:
+            tags.append(section)
+        prefix = f"[{' '.join(tags)}] " if tags else ""
         lines.append(prefix + str(item.get("text") or ""))
     return "\n".join(lines)
+
+
+def user_prompt(claim_text: str, evidence: list[dict[str, Any]]) -> str:
+    return f"Claim:\n{claim_text}\n\nEvidence:\n{evidence_text(evidence) or '(none)'}"
+
+
+def _judge_local(claim_text: str, rows: list[dict[str, Any]], model: str) -> dict[str, Any]:
+    from lya_local import adapter_dir, generate
+
+    path = adapter_dir(model)
+    if path is None:
+        return dict(_NOT_RUN)
+    key_hash = cache_key(claim_text, rows, model)
+    cached = _read_cache(key_hash)
+    if cached is not None:
+        return cached
+    try:
+        content = generate(path, SYSTEM, user_prompt(claim_text, rows))
+    except (OSError, RuntimeError, ValueError):
+        return dict(_NOT_RUN)
+    parsed = _parse(content)
+    if parsed is None:
+        return dict(_NOT_RUN)
+    _write_cache(key_hash, parsed["verdict"], parsed["confidence"])
+    return parsed
 
 
 def judge_claim(
@@ -88,16 +123,18 @@ def judge_claim(
     transport: httpx.BaseTransport | None = None,
     api_key: str | None = None,
 ) -> dict[str, Any]:
+    rows = list(evidence or [])
+    model = model_id()
+    if model == "local" or model.startswith("local:"):
+        return _judge_local(claim_text, rows, model)
     key = api_key if api_key is not None else os.environ.get("XAI_API_KEY", "").strip()
     if not key:
         return dict(_NOT_RUN)
-    rows = list(evidence or [])
-    model = model_id()
     key_hash = cache_key(claim_text, rows, model)
     cached = _read_cache(key_hash)
     if cached is not None:
         return cached
-    user = f"Claim:\n{claim_text}\n\nEvidence:\n{evidence_text(rows) or '(none)'}"
+    user = user_prompt(claim_text, rows)
     try:
         with httpx.Client(transport=transport, timeout=30) as client:
             response = client.post(
@@ -106,13 +143,7 @@ def judge_claim(
                 json={
                     "model": model,
                     "messages": [
-                        {
-                            "role": "system",
-                            "content": (
-                                "Compare the claim with the evidence rows only. "
-                                "Return verdict and confidence. Do not search, write code, or parse a PDF."
-                            ),
-                        },
+                        {"role": "system", "content": SYSTEM},
                         {"role": "user", "content": user},
                     ],
                     "response_format": _SCHEMA,

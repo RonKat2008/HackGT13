@@ -1,9 +1,12 @@
+import sqlite3
 import time
 from pathlib import Path
+from uuid import uuid4
 
 from fastapi.testclient import TestClient
 
 from app import app
+from desk import DEMO_CONFERENCE_ID, DESK_OWNER
 
 
 def _client(tmp_path, monkeypatch) -> TestClient:
@@ -123,31 +126,70 @@ def test_ask_uses_the_mentioned_paper(tmp_path, monkeypatch):
     assert any(step["kind"] == "quote" for step in messages[1]["trace"])
 
 
-def test_signup_conferences_stay_on_that_account(tmp_path, monkeypatch):
+def test_listing_ignores_who_is_signed_in(tmp_path, monkeypatch):
     client = _client(tmp_path, monkeypatch)
+    added = client.post(
+        f"/desk/conferences/{DEMO_CONFERENCE_ID}/submissions",
+        json={"lines": ["0000.00001"]},
+    )
+    assert added.status_code == 200
+    created = client.post(
+        "/conferences",
+        json={"name": "Ada track", "contact_email": "ada@example.edu"},
+    )
+    assert created.status_code == 200
+    ada = client.get("/desk/conferences", params={"owner": "11111111-1111-4111-8111-111111111111"})
+    lin = client.get("/desk/conferences", params={"owner": "22222222-2222-4222-8222-222222222222"})
+    assert ada.status_code == 200
+    assert [item["conference_id"] for item in ada.json()] == [DEMO_CONFERENCE_ID]
+    assert lin.json() == ada.json()
+    papers = client.get(f"/desk/conferences/{DEMO_CONFERENCE_ID}").json()["papers"]
+    assert [paper["arxiv_id"] for paper in papers] == ["0000.00001"]
+    refused = client.delete(f"/desk/conferences/{DEMO_CONFERENCE_ID}")
+    assert refused.status_code == 409
+    papers = client.get(f"/desk/conferences/{DEMO_CONFERENCE_ID}").json()["papers"]
+    assert [paper["arxiv_id"] for paper in papers] == ["0000.00001"]
+
+
+def test_second_signup_does_not_create_a_list(tmp_path, monkeypatch):
+    client = _client(tmp_path, monkeypatch)
+    db_path = tmp_path / "playbook.sqlite"
+
     first = client.post(
         "/desk/signup",
-        json={"email": "ada@example.edu", "password": "paper-desk"},
+        json={"email": "ada@example.edu", "password": "password1"},
     )
     second = client.post(
         "/desk/signup",
-        json={"email": "lin@example.edu", "password": "paper-desk"},
+        json={"email": "lin@example.edu", "password": "password2"},
     )
     assert first.status_code == 200
     assert second.status_code == 200
-    created = client.post(
-        "/desk/accounts/conferences",
+
+    listed = client.get("/desk/conferences")
+    assert listed.status_code == 200
+    assert [item["conference_id"] for item in listed.json()] == [DEMO_CONFERENCE_ID]
+    with sqlite3.connect(db_path) as conn:
+        rows = conn.execute(
+            "SELECT conference_id, owner FROM conferences"
+        ).fetchall()
+        assert rows == [(DEMO_CONFERENCE_ID, DESK_OWNER)]
+
+    linked = client.post(
+        "/desk/accounts/link",
         json={
-            "owner": first.json()["user_id"],
-            "name": "Ada track",
-            "contact_email": "ada@example.edu",
+            "user_id": str(uuid4()),
+            "email": "linked@example.edu",
         },
     )
-    assert created.status_code == 200
-    ada = client.get("/desk/conferences", params={"owner": first.json()["user_id"]})
-    lin = client.get("/desk/conferences", params={"owner": second.json()["user_id"]})
-    assert [item["name"] for item in ada.json()] == ["Ada track"]
-    assert lin.json() == []
+    assert linked.status_code == 200
+    listed = client.get("/desk/conferences")
+    assert [item["conference_id"] for item in listed.json()] == [DEMO_CONFERENCE_ID]
+    with sqlite3.connect(db_path) as conn:
+        rows = conn.execute(
+            "SELECT conference_id, owner FROM conferences"
+        ).fetchall()
+        assert rows == [(DEMO_CONFERENCE_ID, DESK_OWNER)]
 
 
 def test_linked_account_can_own_a_conference(tmp_path, monkeypatch):
@@ -166,9 +208,14 @@ def test_linked_account_can_own_a_conference(tmp_path, monkeypatch):
             "contact_email": "chair@example.edu",
         },
     )
-    assert created.status_code == 200
+    assert created.status_code == 409
     listed = client.get("/desk/conferences", params={"owner": user_id})
-    assert [item["name"] for item in listed.json()] == ["Desk review"]
+    assert [item["conference_id"] for item in listed.json()] == [DEMO_CONFERENCE_ID]
+    with sqlite3.connect(tmp_path / "playbook.sqlite") as conn:
+        rows = conn.execute(
+            "SELECT conference_id, owner FROM conferences"
+        ).fetchall()
+        assert rows == [(DEMO_CONFERENCE_ID, DESK_OWNER)]
 
 
 def test_paper_shelf_is_context_not_an_issue(tmp_path, monkeypatch):

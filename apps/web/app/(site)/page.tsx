@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { deskUser } from "@/lib/session";
 import { Films, HeroStage } from "./films";
 import { FindingIndex, StageWalk } from "./reading";
 
@@ -17,7 +18,8 @@ const steps = [
   },
 ];
 
-export default function HomePage() {
+export default async function HomePage() {
+  const user = await deskUser();
   return (
     <main>
       <section className="relative overflow-hidden">
@@ -41,9 +43,15 @@ export default function HomePage() {
               <span>Stamp</span>
             </p>
             <div className="hero-actions mt-10 flex flex-wrap items-center gap-4">
-              <Link href="/signup" className="rounded-full bg-[#1c1915] px-5 py-3 text-sm text-[#f4f0e6]">
-                Create account
-              </Link>
+              {user ? (
+                <Link href="/desk" className="rounded-full bg-[#1c1915] px-5 py-3 text-sm text-[#f4f0e6]">
+                  Open the desk
+                </Link>
+              ) : (
+                <Link href="/login" className="rounded-full bg-[#1c1915] px-5 py-3 text-sm text-[#f4f0e6]">
+                  Sign in
+                </Link>
+              )}
               <Link href="#how" className="text-sm underline decoration-[#c4a15a] underline-offset-4">
                 Watch how it works
               </Link>
