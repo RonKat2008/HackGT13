@@ -7,7 +7,14 @@ os.environ["ARX_EMBEDDER"] = "hash"
 from jev import DEFAULT_CAP
 from models import Evidence, is_finding
 from paper_audit import audit_paper
-from verify import build_source_text, cache_key, finished_sentence, judge_claims, review_uncertain
+from verify import (
+    build_source_text,
+    cache_key,
+    finished_sentence,
+    judge_claims,
+    judge_with_lya,
+    review_uncertain,
+)
 
 FIXTURES = Path(__file__).resolve().parents[1] / "fixtures"
 HALLUCINATED = FIXTURES / "hallucinated.pdf"
@@ -485,3 +492,28 @@ def test_critic_does_not_reopen_a_number_contradiction(monkeypatch) -> None:
     monkeypatch.setattr("jev.judge_claim", boom)
     review_uncertain([claim])
     assert claim["verdict"] == "contradicted"
+
+
+def test_without_the_lya_flag_the_judge_still_calls_jev(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("RUN_DB", str(tmp_path / "cache.sqlite"))
+    monkeypatch.setenv("OPENROUTER_API_KEY", "test-openrouter-key-not-real")
+    monkeypatch.delenv("ARX_LYA", raising=False)
+    calls = _scripted(monkeypatch, JUDGED)
+    claim = _claim(
+        "Accuracy reached 95.2% on the public benchmark.",
+        "numerical",
+        [
+            {
+                "page": 2,
+                "section": "results",
+                "text": "The model accuracy was 61.0%.",
+                "role": "contradicts",
+                "source": "paper",
+            }
+        ],
+    )
+    judge_with_lya([claim])
+    assert len(calls) == 1
+    assert claim["verdict"] == "contradicted"
+    assert "Jev judgment" in claim["steps"]
+    assert "Lya verdict" not in claim["steps"]

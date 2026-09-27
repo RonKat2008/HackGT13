@@ -1,0 +1,8 @@
+{"claim": "Accuracy reached 95.2% on the public benchmark.", "evidence": [{"section": "results", "text": "The model accuracy was 61.0%."}], "label": "contradicted"}
+{"claim": "Accuracy reached 95.2% on the public benchmark.", "evidence": [{"section": "results", "text": "The model accuracy was 95.2% on the public benchmark."}], "label": "supported"}
+{"claim": "The model achieved a 95.2 F1 score.", "evidence": [{"section": "results", "text": "Accuracy reached 95.2% on the public benchmark."}], "label": "contradicted"}
+{"claim": "Our method improves performance by 7.8 percentage points over the baseline.", "evidence": [{"section": "results", "text": "Our method improves performance by 7.8% over the baseline."}], "label": "contradicted"}
+{"claim": "Accuracy reached 95.2% on the public benchmark.", "evidence": [{"section": "abstract", "text": "Accuracy reached 95.2% on the public benchmark."}], "label": "not_mentioned"}
+{"claim": "Table 2 lists an accuracy of 89.2.", "evidence": [{"section": "discussion", "text": "We discuss accuracy only in general terms."}], "label": "not_mentioned"}
+{"claim": "Of the 891 passengers, 342 survived.", "evidence": [{"section": "results", "text": "COUNT of Survived equal to 1 is 342."}], "label": "supported"}
+{"claim": "317 passengers travelled in first class.", "evidence": [{"section": "results", "text": "COUNT of Pclass equal to 1 is 216."}], "label": "contradicted"}

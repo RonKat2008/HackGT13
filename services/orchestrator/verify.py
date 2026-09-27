@@ -15,13 +15,13 @@ from typing import Any
 import jev
 from jev import DEFAULT_CAP
 from loop import retry_guard_dropped
-from models import Claim
+from models import NUMBER_LOCK, Claim, deterministic_final
 from playbook import apply as apply_patches
 from roles import critic
 
 JUDGED_TYPES = {"numerical", "numerical_comparison", "semantic"}
 NUMBER_RE = re.compile(r"\d+\.\d+")
-NUMBER_CHECK = "Compared the abstract number with the results."
+NUMBER_CHECK = NUMBER_LOCK
 _POOL_WORKERS = 4
 _CACHE_LOCK = threading.Lock()
 REVIEW_CONFIDENCE = 0.70
@@ -62,17 +62,25 @@ def build_source_text(claim: dict[str, Any]) -> str:
 def finished_sentence(claims: list[dict[str, Any]]) -> str:
     judged = 0
     unconfigured = 0
+    lya_only = 0
     for claim in claims:
         steps = [str(step) for step in (claim.get("steps") or [])]
-        if any(step == "Jev judgment" for step in steps):
+        jev_judged = any(step == "Jev judgment" for step in steps)
+        lya_judged = any(step == "Lya verdict" for step in steps)
+        if jev_judged:
             judged += 1
         elif any("Jev not configured" in step for step in steps):
             unconfigured += 1
+        elif lya_judged:
+            lya_only += 1
     if judged:
         unit = "claim" if judged == 1 else "claims"
         return f"Judged {judged} {unit}."
     if unconfigured:
         return "Jev not configured."
+    if lya_only:
+        unit = "claim" if lya_only == 1 else "claims"
+        return f"Lya settled {lya_only} {unit}."
     return "No numerical or semantic claim was sent to Jev."
 
 
@@ -80,7 +88,10 @@ def critic_sentence(claims: list[dict[str, Any]]) -> str:
     reviewed = [
         claim
         for claim in claims
-        if any(str(step).startswith("Round ") for step in (claim.get("steps") or []))
+        if any(
+            str(step).startswith("Round ") or str(step).startswith("Jev requested ")
+            for step in (claim.get("steps") or [])
+        )
     ]
     if not reviewed:
         return "No uncertain verdict to review."
@@ -237,6 +248,164 @@ def judge_claims(claims: list[dict[str, Any]]) -> None:
         futures = [pool.submit(one, claim) for claim in to_run]
         for future in futures:
             future.result()
+
+
+def lya_enabled() -> bool:
+    if os.environ.get("PYTEST_CURRENT_TEST") and os.environ.get("ARX_LYA") != "live":
+        return False
+    return True
+
+
+def judge_with_lya(
+    claims: list[dict[str, Any]],
+    *,
+    path: str = "",
+    sections: dict[str, str] | None = None,
+    references: str = "",
+) -> None:
+    """Lya settles a routine claim. Jev runs only when Lya is unsure, then at most two tools."""
+    if not lya_enabled():
+        judge_claims(claims)
+        return
+    import lya
+
+    context: dict[str, Any] = {
+        "path": path,
+        "sections": sections or {},
+        "references": references,
+        "index": None,
+        "_index_tried": False,
+    }
+    openrouter = os.environ.get("OPENROUTER_API_KEY", "").strip()
+    pending = [
+        claim
+        for claim in claims
+        if str(claim.get("claim_type") or "") in JUDGED_TYPES and not deterministic_final(claim)
+    ]
+    for claim in pending[:DEFAULT_CAP]:
+        _lya_then_jev(claim, context, openrouter, lya)
+
+
+def _lya_then_jev(claim: dict[str, Any], context: dict[str, Any], openrouter: str, lya: Any) -> None:
+    if deterministic_final(claim):
+        return
+    answer = lya.judge_claim(str(claim.get("text") or ""), list(claim.get("evidence") or []))
+    if answer.get("not_run"):
+        if not os.environ.get("XAI_API_KEY", "").strip():
+            _append_step(claim, "Lya not configured")
+    else:
+        _append_step(claim, "Lya verdict")
+        if lya.accepts(answer):
+            _store(claim, str(answer.get("verdict") or "not_mentioned"), _confidence(answer.get("confidence")))
+            return
+    if deterministic_final(claim):
+        return
+    if not openrouter:
+        _append_step(claim, "Jev not configured")
+        return
+    _jev_once(claim, openrouter)
+    if not _needs_more(claim):
+        return
+    claim["rounds"] = 1
+    for round_num in range(2, MAX_ROUNDS + 1):
+        import tools
+
+        _ensure_index(context)
+        names = tools.tools_for(claim)
+        for name in names:
+            _append_step(claim, f"Jev requested {name}")
+        rows = tools.run_tools(claim, names, context)
+        _merge_rows(claim, rows)
+        claim["rounds"] = round_num
+        if deterministic_final(claim):
+            return
+        _jev_once(claim, openrouter)
+        if not _needs_more(claim):
+            return
+    if _needs_more(claim):
+        claim["verdict"] = "insufficient_evidence"
+        claim["confidence"] = _confidence(claim.get("confidence"))
+        claim["reason"] = "Requires human review"
+        claim["rounds"] = MAX_ROUNDS
+
+
+def _ensure_index(context: dict[str, Any]) -> None:
+    if context.get("index") is not None or context.get("_index_tried"):
+        return
+    context["_index_tried"] = True
+    path = str(context.get("path") or "")
+    if not path:
+        return
+    try:
+        import evidence as evidence_index
+
+        context["index"] = evidence_index.PaperIndex(path, context.get("sections") or {})
+    except Exception:
+        context["index"] = None
+
+
+def _jev_once(claim: dict[str, Any], key: str) -> None:
+    source = build_source_text(claim)
+    key_hash = cache_key(str(claim.get("text") or ""), source)
+    with _CACHE_LOCK:
+        cached = _read_cache(key_hash)
+    if cached is not None:
+        _remember(claim, str(cached["label"]), float(cached["confidence"]))
+        return
+    answer = jev.judge_claim(str(claim.get("text") or ""), source, api_key=key)
+    if answer.get("not_run"):
+        if not _number_contradicted(claim):
+            claim["verdict"] = "not_checked"
+            claim["confidence"] = 0.0
+        return
+    label = str(answer.get("label") or "not_mentioned")
+    if label not in {"supported", "contradicted", "not_mentioned"}:
+        label = "not_checked"
+    score = _confidence(answer.get("confidence"))
+    _remember(claim, label, score)
+    with _CACHE_LOCK:
+        _write_cache(
+            key_hash,
+            label,
+            score,
+            answer.get("probs") if isinstance(answer.get("probs"), dict) else {},
+        )
+
+
+def _needs_more(claim: dict[str, Any]) -> bool:
+    if deterministic_final(claim):
+        return False
+    steps = [str(step) for step in (claim.get("steps") or [])]
+    if "Jev judgment" not in steps:
+        return False
+    verdict = str(claim.get("verdict") or "")
+    score = _confidence(claim.get("confidence"))
+    if verdict == "not_mentioned":
+        return True
+    if verdict in {"supported", "contradicted", "ambiguous"} and score < REVIEW_CONFIDENCE:
+        return True
+    return False
+
+
+def _merge_rows(claim: dict[str, Any], rows: list[dict[str, Any]]) -> None:
+    import tools
+
+    evidence = list(claim.get("evidence") or [])
+    seen = {str(item.get("text") or "") for item in evidence if isinstance(item, dict)}
+    for row in rows:
+        item = tools.screen_evidence(row)
+        if not item["text"] or item["text"] in seen:
+            continue
+        seen.add(item["text"])
+        evidence.append(item)
+    claim["evidence"] = evidence
+
+
+def _store(claim: dict[str, Any], label: str, score: float) -> None:
+    if deterministic_final(claim):
+        return
+    claim["verdict"] = label
+    claim["confidence"] = score
 
 
 def _tagged(item: dict[str, Any]) -> str:

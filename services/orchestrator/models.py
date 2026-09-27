@@ -109,6 +109,23 @@ STAGES = [
     "stamp",
 ]
 
+# A later judge may name only these. Claim type still comes from the regex in claims.py.
+TOOL_NAMES = (
+    "search_paper",
+    "search_section",
+    "search_tables",
+    "resolve_citation",
+    "numeric_check",
+    "resolve_dataset",
+    "execute_dataset_claim",
+)
+
+# What Lya is allowed to say. The screen keeps the verdict words it already stores.
+LYA_VERDICTS = frozenset({"supported", "contradicted", "not_mentioned", "ambiguous"})
+
+NUMBER_LOCK = "Compared the abstract number with the results."
+TABLE_LOCK = "Compared the claimed change with the table."
+
 
 class ClaimType(StrEnum):
     CITATION = "citation"
@@ -170,6 +187,15 @@ class Evidence(StrictModel):
     source: EvidenceSource = EvidenceSource.PAPER
 
 
+class ToolEvidence(StrictModel):
+    evidence_id: str
+    source_type: str
+    page: int | None = None
+    section: str = ""
+    text: str
+    metadata: dict = Field(default_factory=dict)
+
+
 class CatalogQuery(StrictModel):
     catalog: str
     status: str
@@ -212,6 +238,23 @@ class DeskClaim(StrictModel):
     steps: list[str] = Field(default_factory=list)
     catalog: Catalog | None = None
     computation: Computation | None = None
+
+
+def deterministic_final(claim: dict) -> bool:
+    """A number check, a table formula, or a finished rerun is final. Lya and Jev do not replace it."""
+    computation = claim.get("computation") or {}
+    if isinstance(computation, dict) and computation.get("status") in {
+        "reproduced",
+        "could_not_reproduce",
+    }:
+        return True
+    verdict = str(claim.get("verdict") or "")
+    steps = [str(step) for step in (claim.get("steps") or [])]
+    if verdict == "contradicted" and any(NUMBER_LOCK in step for step in steps):
+        return True
+    if verdict in {"supported", "contradicted"} and any(TABLE_LOCK in step for step in steps):
+        return True
+    return False
 
 
 def is_finding(claim: dict) -> bool:

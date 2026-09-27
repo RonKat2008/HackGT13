@@ -265,16 +265,27 @@ def audit_paper(
     def verify() -> None:
         pending: list[dict[str, Any]] = []
         for claim in typed_claims:
-            if str(claim.get("claim_type") or "") == "numerical_comparison" and not claim.get("computation"):
+            if (
+                str(claim.get("claim_type") or "") == "numerical_comparison"
+                and not claim.get("computation")
+                and not claim_verify.lya_enabled()
+            ):
                 steps = list(claim.get("steps") or [])
                 steps.append("No nearby table, so this gain was left unchecked.")
                 claim["steps"] = steps
                 continue
             pending.append(claim)
-        claim_verify.judge_claims(pending)
+        claim_verify.judge_with_lya(
+            pending,
+            path=str(path),
+            sections=sections,
+            references=str(sections.get("references") or ""),
+        )
         _settle_local(typed_claims, sections, kaggle, path)
 
     def critic() -> None:
+        if claim_verify.lya_enabled():
+            return
         claim_verify.review_uncertain(typed_claims)
 
     def stamp() -> None:

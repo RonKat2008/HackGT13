@@ -23,6 +23,18 @@ export function evidencePage(claim: Claim): number | null {
   return contradicting?.page ?? claim.evidence.find((item) => item.page)?.page ?? claim.page;
 }
 
+export function judgeActor(step: string): "Lya" | "Jev" | null {
+  if (step.startsWith("Lya")) return "Lya";
+  if (step.startsWith("Jev")) return "Jev";
+  return null;
+}
+
+export function stepBody(step: string, actor: "Lya" | "Jev" | null): string {
+  if (!actor) return step;
+  const rest = step.slice(actor.length).trim();
+  return rest || step;
+}
+
 export function catalogWord(status: string): string {
   const value = status.toLowerCase();
   if (value === "match" || value === "resolved" || value === "supported") return "Match";
@@ -83,9 +95,17 @@ export function FindingCard({
       {chain ? <Provenance claim={claim} /> : null}
       {claim.steps.length > 0 ? (
         <ul className="mt-3 flex flex-col gap-1 text-xs leading-5 text-[#1c1915]">
-          {claim.steps.map((step) => (
-            <li key={step}>{step}</li>
-          ))}
+          {claim.steps.map((step, index) => {
+            const actor = judgeActor(step);
+            return (
+              <li key={`${index}-${step}`} className="flex items-baseline gap-2">
+                {actor ? (
+                  <span className="shrink-0 text-[11px] tracking-[0.12em] text-[#8a6a2f]">{actor}</span>
+                ) : null}
+                <span>{stepBody(step, actor)}</span>
+              </li>
+            );
+          })}
         </ul>
       ) : null}
       {claim.catalog && claim.catalog.queried.length > 0 ? (

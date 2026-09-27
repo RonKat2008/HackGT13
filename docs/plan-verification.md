@@ -1,10 +1,10 @@
 ---
 name: ArxAudit Verification Build
-overview: "Turn the desk from a parser that stamps findings into the verification pipeline in the brief: typed claims, semantic evidence, Jev on the chair's path, external citation resolution, bounded recursion, table arithmetic, and executable Kaggle claims, with a UI that shows the whole evidence chain. Work is split into two even tracks after one schema gate, sized for the Sep 27 12:00pm EDT deadline."
+overview: "The verification pipeline is already in the repo. Do not rebuild it. The open product change is one chair and one list. Lya is an adjustment inside the existing verify stage: it settles routine claims, and the existing Jev call runs only when that check is unsure."
 todos:
   - id: A1
     content: "A1 Contract and storage: Claim/Evidence models, paper_claims table, summary in paper_desk, repro seam, stage names, register 0000.00003, example JSON"
-    status: in_progress
+    status: completed
   - id: B1
     content: "B1 Demo fixture paper: make_demo_paper.py and demo_paper.pdf with the planned claims"
     status: completed
@@ -16,31 +16,31 @@ todos:
     status: completed
   - id: A3
     content: A3 Semantic evidence with MiniLM + NumPy, verifier/falsifier (evidence.py)
-    status: pending
+    status: completed
   - id: B2
     content: B2 Restricted computation DSL with pandas (dsl.py)
     status: completed
   - id: A4
     content: A4 Jev on the desk with confidence and cache (verify.py)
-    status: pending
+    status: completed
   - id: B3
     content: B3 Claim compiler and dataset resolver (compiler.py, datasets.py)
     status: completed
   - id: A6
     content: "A6 External citation resolver: references.py + catalogs.py (Crossref, OpenAlex, S2)"
-    status: pending
+    status: completed
   - id: B4
     content: "B4 Rerun rewrite: compile → resolve → download → DSL (repro.py)"
     status: completed
   - id: A5
     content: A5 Bounded recursion with critic patches, max 3 rounds
-    status: pending
+    status: completed
   - id: B6
     content: B6 Finding evidence chain UI with two-band PdfView, catalog and computation views
     status: completed
   - id: A7
     content: A7 Tables and derived-number arithmetic (tables.py)
-    status: pending
+    status: completed
   - id: B7
     content: B7 Rounds, agent names, report page mirror, home copy
     status: completed
@@ -53,6 +53,12 @@ todos:
   - id: J2
     content: J2 Demo script and docs
     status: pending
+  - id: U1
+    content: "U1 Single user: one chair, one list, no signup and no conference picker"
+    status: pending
+  - id: Lya
+    content: "Lya adjustment: existing verify stage calls Lya first, then the existing Jev call only when unsure"
+    status: completed
   - id: A9
     content: "A9 Stretch: parallel claim pipelines"
     status: completed
@@ -71,41 +77,52 @@ Source brief: `/Users/sohaibqurashi/Documents/ArxAudit_Complete_Product_Technica
 
 Deadline: Sep 27, 12:00pm EDT. Each step is 1–2 hours. Do them in order. Do not commit until the user says so.
 
+## Now: one chair, and Lya inside the existing judge
+
+The verification steps A1–A9 and B1–B9 are already in the repo. Do not rebuild them. Do not start a second pipeline. Two adjustments sit on that desk.
+
+**One chair (still open).** One person opens ArxAudit and lands on one list. There is no sign-up, no second account, and no page that asks them to create a conference. Papers, the run, the chat, and the report all belong to that list.
+
+**Person A.** `services/orchestrator/desk.py`, `app.py`, and `tests/test_desk.py`.
+
+1. One fixed owner. Listing conferences does not depend on a Supabase user id.
+2. `POST /desk/signup` and `POST /desk/accounts/link` are not on the chair's path. Keep the functions if tests need them, but the desk no longer creates a second user to get a list.
+3. The one list is the conference already used for the demo. Do not delete its papers.
+4. Replace `test_signup_conferences_stay_on_that_account` with a test that a second signup is not how a list is created, and that the desk has one owner.
+
+**Person B.** `apps/web` only. `/desk` goes straight to that one list. Remove the conference picker and the sign-up form. Sign-in, if a gate stays for the demo, is one account, not a new user each time.
+
+**Lya, in the verify stage that already exists.** Parse, claims, evidence, citations, numbers, tables, dataset, and reproduce still run first. `tools.py` calls `evidence.py`, `tables.py`, `catalogs.py`, `references.py`, and `repro.reproduce`. It does not reimplement them. `lya.py` only returns a verdict and a confidence. The edit is `verify.py` and the verify / critic stages in `paper_audit.py`: a number missing from the results, a table formula, or a finished rerun stays final; otherwise Lya runs; the existing Jev call runs only when Lya is under `0.90`. A weak Lya contradiction is not a finding. Jev may ask for at most two of the existing tools, and only for the three rounds the critic already had. The finding card labels the stored step. Summary counts stay the same.
+
+Do not edit each other's files.
+
 ## What changes and what stays
 
-**Stays.** Next.js desk at `/desk`, Supabase auth, FastAPI checker, SQLite desk DB, pdf.js viewer with text-layer highlight, arXiv id intake, the two fixtures, Grok for chat prose, the playbook modules (`store.py`, `fitness.py`, `roles.py`, `playbook.py`, `loop.py`), the word rules (no fraud, no AI-written, likeness is never a finding).
+**Stays.** The Next.js desk, the FastAPI checker, the SQLite desk DB, the pdf.js viewer, arXiv intake, the fixtures, Grok for chat prose, and the playbook modules. Typed claims, MiniLM evidence, the three catalogs, table arithmetic, the pandas DSL, and the Kaggle rerun stay. Jev stays the uncertain-claim judge. Screen words stay the ones already on the card. No fraud, no AI-written, and likeness is never a finding. Supabase stays only if one demo sign-in is still required. It is not a multi-account system.
 
-**Changes, per the brief.**
-- Claims become first-class rows with id, page, section, type. Today `_extract_claims` in [services/orchestrator/paper_audit.py](services/orchestrator/paper_audit.py) returns untyped dicts and only failures are stored.
-- Support goes from word overlap (`_support_issues`) to MiniLM embeddings + NumPy cosine top-k, per section.
-- Jev runs on the desk. Today `desk._audit_job` calls `audit_paper` and the `jev` stage only stamps `contradicted`. Real `jev.judge_claim` is only on the old batch path.
-- Resolve checks the reference against Crossref, OpenAlex, Semantic Scholar. Today it only checks the PDF's own bibliography.
-- Low-confidence verdicts recurse through the existing critic/`playbook.apply`/`MAX_ROUNDS = 3` loop, ending in "Requires human review".
-- Numbers gains table parsing and derived arithmetic (difference, percent change).
-- Rerun becomes: claim compiler → dataset resolver → Kaggle download → local pandas over a restricted DSL. Today `repro.py` uses stdlib csv with 4 ops and a kernel push.
-- UI shows counts, categories, the evidence chain (claim page + evidence page + verdict + confidence), catalog results, computation results, rounds. Status words become the brief's vocabulary.
+**This adjustment.** One list, instead of a conference picker and a signup. Lya called from the existing verify stage, in front of the existing Jev call.
 
-**Cut.** Cross-run playbook learning (P3), Level 5 reproduction, contrastive kernel, Kaggle as compute, likeness on the desk. PDF upload is the last stretch step.
+**Already in the repo. Do not redo.** Claim rows, embeddings, catalog lookup, table formulas, dataset compile and execute, the finding chain, and PDF upload.
 
-## Pipeline after this plan
+**Cut.** Cross-run playbook learning, Level 5 reproduction, contrastive kernel, Kaggle as compute, likeness on the desk. Do not add `CORRELATION`. Do not execute model-written Python.
+
+## Pipeline
+
+The stages below the judge are the ones already built. Lya is only the new gate in front of Jev.
 
 ```mermaid
 flowchart TD
-  pdf[PDF] --> parse[Parser: sections, pages, tables]
-  parse --> claims[Claims: id, page, section, type]
-  claims --> route{Type}
-  route -->|citation| cite[Citation agent: bibliography entry, catalogs]
-  route -->|numerical| num[Numeric agent: cross-section, table arithmetic]
-  route -->|dataset| repro[Repro agent: compiler, resolver, DSL executor]
-  route -->|semantic| evid[Evidence agent: MiniLM top-k, verifier and falsifier]
-  cite --> jev[Jev: bounded verdict + confidence]
-  num --> jev
-  repro --> jev
-  evid --> jev
-  jev -->|confident| finding[Finding with evidence chain]
-  jev -->|uncertain| critic[Critic: one typed patch]
-  critic --> evid
-  critic -->|round 3| human[Insufficient evidence: requires human review]
+  pdf[PDF] --> existing[Existing parse, claims, evidence, citations, numbers, tables, dataset, reproduce]
+  existing --> settled{Deterministic answer?}
+  settled -->|yes| finding[Stored verdict]
+  settled -->|no| lya[Lya]
+  lya --> sure{Confidence at least 0.90?}
+  sure -->|yes| finding
+  sure -->|no| jev[Existing Jev]
+  jev --> more{Still uncertain and under 3 rounds?}
+  more -->|yes| tools[At most two existing tools]
+  tools --> jev
+  more -->|no| human[Insufficient evidence]
 ```
 
 ## Ownership
@@ -248,11 +265,11 @@ Commit only when the user says so. Suggested points: after A1 (contract), after 
 
 ## Order of work at a glance
 
-- Hour 0: A1. B1 in parallel.
-- Then A: A2 → A3 → A4 → A6 → A5 → A7 → A8 → A9.
-- Then B: B5 → B2 → B3 → B4 → B6 → B7 → B8 → B9.
-- J1 as soon as A4, A6, B4, B6 exist. J2 last.
-- If time runs short, cut in this order: B9, B8, A9, A7, A5. Never cut A4, A6, B4, B6.
+A1–A9 and B1–B9 are in the repo. Lya is in the existing verify stage. Do not restart that build.
+
+- Next: U1, one chair and one list. Person A on the desk API, Person B on `/desk`.
+- Then J1 on the demo paper with this judge, then J2.
+- If time runs short, leave the live J1 regress of `0000.00001` and `0000.00002` for last. Do not cut the one list, the `0.90` threshold, or the rule that a finished number, table, or rerun is final.
 
 ## Rules that still bind
 
